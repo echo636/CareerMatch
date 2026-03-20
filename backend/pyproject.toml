@@ -1,0 +1,20 @@
+[project]
+name = "careermatch-backend"
+version = "0.1.0"
+description = "Flask backend scaffold for the CareerMatch platform"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "Flask>=3.0,<4.0",
+  "Flask-Cors>=5.0,<6.0",
+  "pypdf>=5.4,<6.0",
+  "python-docx>=1.1,<2.0",
+  "python-dotenv>=1.0,<2.0"
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

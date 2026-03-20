@@ -1,0 +1,50 @@
+[
+  {
+    "id": "job-001",
+    "title": "AI 产品工程师",
+    "company": "星图智能",
+    "location": "上海",
+    "summary": "负责简历解析、RAG 应用与岗位推荐系统建设，落地 LLM 工作流。",
+    "skills": ["Python", "LLM", "Embedding", "Flask", "Qdrant", "PostgreSQL"],
+    "project_keywords": ["简历解析", "向量检索", "推荐系统"],
+    "hard_requirements": ["Python", "LLM"],
+    "salary_range": {
+      "min": 28000,
+      "max": 40000,
+      "currency": "CNY"
+    },
+    "experience_years": 5
+  },
+  {
+    "id": "job-002",
+    "title": "智能招聘平台后端工程师",
+    "company": "知行招聘",
+    "location": "杭州",
+    "summary": "负责岗位入库、匹配打分与 API 服务，要求具备结构化数据和检索经验。",
+    "skills": ["Python", "Flask", "PostgreSQL", "Docker", "Redis"],
+    "project_keywords": ["数据入库", "匹配评分", "服务编排"],
+    "hard_requirements": ["Python", "Flask"],
+    "salary_range": {
+      "min": 24000,
+      "max": 32000,
+      "currency": "CNY"
+    },
+    "experience_years": 4
+  },
+  {
+    "id": "job-003",
+    "title": "LLM 应用开发工程师",
+    "company": "零界科技",
+    "location": "深圳",
+    "summary": "构建面向求职与人才服务的 AI Agent、Prompt 模板和能力分析模块。",
+    "skills": ["Python", "LLM", "Prompt Design", "FastAPI", "pgvector"],
+    "project_keywords": ["Agent", "Gap 分析", "提示词工程"],
+    "hard_requirements": ["Python", "LLM"],
+    "salary_range": {
+      "min": 30000,
+      "max": 42000,
+      "currency": "CNY"
+    },
+    "experience_years": 6
+  }
+]
