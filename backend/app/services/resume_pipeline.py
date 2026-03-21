@@ -5,7 +5,16 @@ from app.clients.embedding import SimpleEmbeddingClient
 from app.clients.llm import MockLLMClient
 from app.clients.object_storage import LocalObjectStorageClient
 from app.clients.vector_store import InMemoryVectorStore
-from app.domain.models import ResumeProfile, SalaryRange
+from app.domain.models import (
+    ResumeBasicInfo,
+    ResumeEducation,
+    ResumeProfile,
+    ResumeProject,
+    ResumeSkill,
+    ResumeTag,
+    ResumeWorkExperience,
+    SalaryRange,
+)
 from app.repositories.in_memory import ResumeRepository
 
 
@@ -35,16 +44,22 @@ class ResumePipelineService:
         source_object_key: str = "",
     ) -> ResumeProfile:
         extracted = self.llm_client.extract_resume(raw_text, file_name, resume_id)
+        expected_salary = extracted.get("expected_salary") or {}
         resume = ResumeProfile(
             id=extracted["id"],
-            candidate_name=extracted["candidate_name"],
-            summary=extracted["summary"],
-            skills=extracted["skills"],
-            project_keywords=extracted["project_keywords"],
-            years_experience=extracted["years_experience"],
+            is_resume=extracted.get("is_resume"),
+            basic_info=self._build_basic_info(extracted.get("basic_info") or {}, file_name),
+            educations=[self._build_education(item) for item in extracted.get("educations") or []],
+            work_experiences=[
+                self._build_work_experience(item) for item in extracted.get("work_experiences") or []
+            ],
+            projects=[self._build_project(item) for item in extracted.get("projects") or []],
+            skills=[self._build_skill(item) for item in extracted.get("skills") or []],
+            tags=[self._build_tag(item) for item in extracted.get("tags") or []],
             expected_salary=SalaryRange(
-                min=extracted["salary_min"],
-                max=extracted["salary_max"],
+                min=int(expected_salary.get("min", 25000)),
+                max=int(expected_salary.get("max", 35000)),
+                currency=str(expected_salary.get("currency", "CNY")),
             ),
             raw_text=raw_text,
             source_file_name=file_name,
@@ -82,4 +97,78 @@ class ResumePipelineService:
         return self.repository.get(resume_id)
 
     def _vector_payload(self, resume: ResumeProfile) -> str:
-        return " ".join([resume.summary, *resume.skills, *resume.project_keywords])
+        return " ".join([resume.summary, *resume.skill_names, *resume.project_keywords])
+
+    def _build_basic_info(self, payload: dict, file_name: str) -> ResumeBasicInfo:
+        return ResumeBasicInfo(
+            name=str(payload.get("name") or file_name),
+            gender=payload.get("gender"),
+            age=payload.get("age"),
+            work_years=payload.get("work_years"),
+            current_city=payload.get("current_city"),
+            current_title=payload.get("current_title"),
+            current_company=payload.get("current_company"),
+            status=payload.get("status"),
+            email=payload.get("email"),
+            phone=payload.get("phone"),
+            wechat=payload.get("wechat"),
+            ethnicity=payload.get("ethnicity"),
+            birth_date=payload.get("birth_date"),
+            native_place=payload.get("native_place"),
+            residence=payload.get("residence"),
+            political_status=payload.get("political_status"),
+            id_number=payload.get("id_number"),
+            marital_status=payload.get("marital_status"),
+            summary=payload.get("summary"),
+            self_evaluation=payload.get("self_evaluation"),
+            first_degree=payload.get("first_degree"),
+            avatar=payload.get("avatar") or payload.get("avator"),
+        )
+
+    def _build_education(self, payload: dict) -> ResumeEducation:
+        return ResumeEducation(
+            school=str(payload.get("school") or "待补充院校"),
+            degree=payload.get("degree"),
+            major=payload.get("major"),
+            start_year=payload.get("start_year"),
+            end_year=payload.get("end_year"),
+        )
+
+    def _build_work_experience(self, payload: dict) -> ResumeWorkExperience:
+        return ResumeWorkExperience(
+            company_name=str(payload.get("company_name") or "待补充公司"),
+            industry=payload.get("industry"),
+            title=str(payload.get("title") or "待补充岗位"),
+            level=payload.get("level"),
+            location=payload.get("location"),
+            start_date=payload.get("start_date"),
+            end_date=payload.get("end_date"),
+            responsibilities=list(payload.get("responsibilities") or []),
+            achievements=list(payload.get("achievements") or []),
+            tech_stack=list(payload.get("tech_stack") or []),
+        )
+
+    def _build_project(self, payload: dict) -> ResumeProject:
+        return ResumeProject(
+            name=str(payload.get("name") or "待补充项目"),
+            role=payload.get("role"),
+            domain=payload.get("domain"),
+            description=payload.get("description"),
+            responsibilities=list(payload.get("responsibilities") or []),
+            achievements=list(payload.get("achievements") or []),
+            tech_stack=list(payload.get("tech_stack") or []),
+        )
+
+    def _build_skill(self, payload: dict) -> ResumeSkill:
+        return ResumeSkill(
+            name=str(payload.get("name") or "待补充技能"),
+            level=payload.get("level"),
+            years=payload.get("years"),
+            last_used_year=payload.get("last_used_year"),
+        )
+
+    def _build_tag(self, payload: dict) -> ResumeTag:
+        return ResumeTag(
+            name=str(payload.get("name") or "待补充标签"),
+            category=payload.get("category"),
+        )

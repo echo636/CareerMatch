@@ -5,9 +5,22 @@ import { AppShell } from "@/components/layout/app-shell";
 import { ScorePill } from "@/components/sections/score-pill";
 import { SectionCard } from "@/components/sections/section-card";
 import { getGapReport, getMatchOverview, getResumePreview } from "@/lib/api";
+import type { JobProfile, ResumeProfile } from "@/types/domain";
 
 function normalizeParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function getResumeSummary(resume: ResumeProfile): string {
+  return resume.basicInfo.summary ?? resume.basicInfo.selfEvaluation ?? "候选人简历摘要待补充。";
+}
+
+function getResumeSkillNames(resume: ResumeProfile): string[] {
+  return resume.skills.map((skill) => skill.name);
+}
+
+function getJobSummary(job: JobProfile): string {
+  return job.basicInfo.summary ?? job.basicInfo.responsibilities?.join("；") ?? "岗位说明待补充。";
 }
 
 type MatchesPageProps = {
@@ -23,6 +36,8 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
     getGapReport(resumeId),
   ]);
   const leadMatch = matches[0] ?? null;
+  const resumeSkills = getResumeSkillNames(resume);
+  const resumeSummary = getResumeSummary(resume);
 
   return (
     <AppShell activePath="/matches">
@@ -34,18 +49,20 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
         <div className="resume-overview">
           <div>
             <p className="eyebrow">当前简历</p>
-            <h3>{resume.candidateName}</h3>
-            <p>{resume.summary}</p>
+            <h3>{resume.basicInfo.name}</h3>
+            <p>{resumeSummary}</p>
+            {resume.basicInfo.currentTitle ? <p>当前职级：{resume.basicInfo.currentTitle}</p> : null}
+            {resume.basicInfo.currentCity ? <p>当前城市：{resume.basicInfo.currentCity}</p> : null}
             {resume.sourceFileName ? <p>来源文件：{resume.sourceFileName}</p> : null}
             {resume.sourceObjectKey ? <p>对象存储键：{resume.sourceObjectKey}</p> : null}
           </div>
           <div className="pill-row">
-            <ScorePill label="工作年限" value={Math.min(resume.yearsExperience / 10, 1)} />
-            <ScorePill label="技能数量" value={Math.min(resume.skills.length / 10, 1)} />
+            <ScorePill label="工作年限" value={Math.min((resume.basicInfo.workYears ?? 0) / 10, 1)} />
+            <ScorePill label="技能数量" value={Math.min(resumeSkills.length / 10, 1)} />
             <ScorePill label="目标薪资" value={Math.min(resume.expectedSalary.max / 50000, 1)} />
           </div>
           <div className="tag-row">
-            {resume.skills.map((skill) => (
+            {resumeSkills.map((skill) => (
               <span key={skill} className="tag">
                 {skill}
               </span>
@@ -65,14 +82,15 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
               <div>
                 <p className="eyebrow">最高匹配岗位</p>
                 <h3>
-                  {leadMatch.job.title} / {leadMatch.job.company}
+                  {leadMatch.job.basicInfo.title} / {leadMatch.job.company}
                 </h3>
                 <p>{leadMatch.reasoning}</p>
               </div>
               <div className="pill-row">
                 <ScorePill label="向量召回" value={leadMatch.breakdown.vectorSimilarity} />
                 <ScorePill label="技能匹配" value={leadMatch.breakdown.skillMatch} />
-                <ScorePill label="项目匹配" value={leadMatch.breakdown.projectMatch} />
+                <ScorePill label="经验匹配" value={leadMatch.breakdown.experienceMatch} />
+                <ScorePill label="教育匹配" value={leadMatch.breakdown.educationMatch} />
                 <ScorePill label="薪资匹配" value={leadMatch.breakdown.salaryMatch} />
               </div>
             </div>
@@ -82,14 +100,19 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                 <article key={match.job.id} className="match-card">
                   <div className="match-card-header">
                     <div>
-                      <h3>{match.job.title}</h3>
+                      <h3>{match.job.basicInfo.title}</h3>
                       <p>
-                        {match.job.company} · {match.job.location}
+                        {match.job.company} · {match.job.basicInfo.location ?? "远程"}
                       </p>
                     </div>
                     <strong>{Math.round(match.breakdown.total * 100)}%</strong>
                   </div>
-                  <p>{match.job.summary}</p>
+                  <p>{getJobSummary(match.job)}</p>
+                  <div className="pill-row">
+                    <ScorePill label="技能" value={match.breakdown.skillMatch} />
+                    <ScorePill label="经验" value={match.breakdown.experienceMatch} />
+                    <ScorePill label="教育" value={match.breakdown.educationMatch} />
+                  </div>
                   <div className="tag-row">
                     {match.matchedSkills.map((skill) => (
                       <span key={skill} className="tag">
@@ -123,7 +146,7 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
             <RadarPlaceholder
               values={{
                 skills: leadMatch?.breakdown.skillMatch ?? 0,
-                projects: leadMatch?.breakdown.projectMatch ?? 0,
+                experience: leadMatch?.breakdown.experienceMatch ?? 0,
                 salary: leadMatch?.breakdown.salaryMatch ?? 0,
                 growth: report.missingSkills.length > 0 ? 0.82 : 0.95,
               }}

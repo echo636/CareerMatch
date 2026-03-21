@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 type RadarPlaceholderProps = {
   values: {
     skills: number;
-    projects: number;
+    experience: number;
     salary: number;
     growth: number;
   };
@@ -11,7 +11,7 @@ type RadarPlaceholderProps = {
 
 export function RadarPlaceholder({ values }: RadarPlaceholderProps) {
   const average =
-    (values.skills + values.projects + values.salary + values.growth) / 4;
+    (values.skills + values.experience + values.salary + values.growth) / 4;
 
   return (
     <div className="radar-card">
@@ -25,7 +25,7 @@ export function RadarPlaceholder({ values }: RadarPlaceholderProps) {
       />
       <ul className="radar-legend">
         <li>技能覆盖 {Math.round(values.skills * 100)}%</li>
-        <li>项目对齐 {Math.round(values.projects * 100)}%</li>
+        <li>经验对齐 {Math.round(values.experience * 100)}%</li>
         <li>薪资匹配 {Math.round(values.salary * 100)}%</li>
         <li>成长空间 {Math.round(values.growth * 100)}%</li>
       </ul>
