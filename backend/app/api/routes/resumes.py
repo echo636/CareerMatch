@@ -1,4 +1,4 @@
-from uuid import uuid4
+﻿from uuid import uuid4
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -48,15 +48,20 @@ def upload_resume():
             )
         except DocumentParseError as exc:
             return jsonify({"error": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 502
         return jsonify({"resume": serialize(resume), "resumeId": resume.id})
 
     if not raw_text:
         return jsonify({"error": "content is required when no file is uploaded"}), 400
 
-    resume = services.resume_pipeline.process_resume(
-        file_name=file_name,
-        raw_text=raw_text,
-        resume_id=resume_id,
-        source_content_type="text/plain",
-    )
+    try:
+        resume = services.resume_pipeline.process_resume(
+            file_name=file_name,
+            raw_text=raw_text,
+            resume_id=resume_id,
+            source_content_type="text/plain",
+        )
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
     return jsonify({"resume": serialize(resume), "resumeId": resume.id})

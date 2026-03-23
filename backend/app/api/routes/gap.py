@@ -1,4 +1,4 @@
-from flask import Blueprint, current_app, jsonify, request
+﻿from flask import Blueprint, current_app, jsonify, request
 
 from app.domain.models import serialize
 
@@ -16,5 +16,7 @@ def build_gap_report():
         report = services.gap_analysis_service.build_report(resume_id, top_k)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 404
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
 
     return jsonify({"report": serialize(report)})

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+﻿from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 import os
@@ -12,10 +12,18 @@ class Settings:
     debug: bool
     port: int
     frontend_origin: str
+    llm_provider: str
+    embedding_provider: str
     qdrant_url: str
     postgres_dsn: str
     object_storage_bucket: str
     object_storage_root: Path
+    dashscope_api_key: str
+    dashscope_base_url: str
+    dashscope_timeout_sec: int
+    qwen_llm_model: str
+    qwen_embedding_model: str
+    qwen_embedding_dimensions: int
 
 
 @lru_cache(maxsize=1)
@@ -30,6 +38,8 @@ def get_settings() -> Settings:
         debug=os.getenv("FLASK_DEBUG", "0") == "1",
         port=int(os.getenv("PORT", "5000")),
         frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
+        llm_provider=os.getenv("LLM_PROVIDER", "mock").strip().lower(),
+        embedding_provider=os.getenv("EMBEDDING_PROVIDER", "mock").strip().lower(),
         qdrant_url=os.getenv("QDRANT_URL", "http://localhost:6333"),
         postgres_dsn=os.getenv(
             "POSTGRES_DSN",
@@ -37,4 +47,13 @@ def get_settings() -> Settings:
         ),
         object_storage_bucket=os.getenv("OBJECT_STORAGE_BUCKET", "careermatch-resumes"),
         object_storage_root=storage_root.resolve(),
+        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY", "").strip(),
+        dashscope_base_url=os.getenv(
+            "DASHSCOPE_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ).rstrip("/"),
+        dashscope_timeout_sec=int(os.getenv("DASHSCOPE_TIMEOUT_SEC", "60")),
+        qwen_llm_model=os.getenv("QWEN_LLM_MODEL", "qwen-plus-latest").strip(),
+        qwen_embedding_model=os.getenv("QWEN_EMBEDDING_MODEL", "text-embedding-v4").strip(),
+        qwen_embedding_dimensions=int(os.getenv("QWEN_EMBEDDING_DIMENSIONS", "1024")),
     )

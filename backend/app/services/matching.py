@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from app.clients.embedding import SimpleEmbeddingClient
+from app.clients.embedding import BaseEmbeddingClient
 from app.clients.vector_store import InMemoryVectorStore
 from app.domain.models import (
     BonusExperience,
@@ -41,7 +41,7 @@ class MatchingService:
         self,
         job_repository: JobRepository,
         resume_repository: ResumeRepository,
-        embedding_client: SimpleEmbeddingClient,
+        embedding_client: BaseEmbeddingClient,
         vector_store: InMemoryVectorStore,
     ) -> None:
         self.job_repository = job_repository
@@ -170,18 +170,18 @@ class MatchingService:
     ) -> str:
         strengths: list[str] = []
         if breakdown.skill_match >= 0.8:
-            strengths.append("技能要求命中高")
+            strengths.append("strong skill alignment")
         if breakdown.experience_match >= 0.75:
-            strengths.append("经验要求对齐高")
+            strengths.append("experience matches well")
         if breakdown.education_match >= 0.8:
-            strengths.append("教育背景匹配")
+            strengths.append("education fits")
         if breakdown.salary_match >= 0.85:
-            strengths.append("薪资区间接近")
+            strengths.append("salary expectations overlap")
 
-        strengths_summary = "、".join(strengths[:2]) or "结构化条件整体较匹配"
-        matched_summary = " / ".join(matched_skills[:3]) or "基础能力"
-        missing_summary = " / ".join(missing_skills[:2]) or "暂无明显缺口"
-        return f"{strengths_summary}，当前已命中 {matched_summary}，主要待补齐 {missing_summary}。"
+        strengths_summary = "; ".join(strengths[:2]) or "overall structured fit is reasonable"
+        matched_summary = " / ".join(matched_skills[:3]) or "core skills"
+        missing_summary = " / ".join(missing_skills[:2]) or "no obvious gaps"
+        return f"{strengths_summary}; matched {matched_summary}; still missing {missing_summary}."
 
     def _resume_payload(self, resume: ResumeProfile) -> str:
         return " ".join([resume.summary, *resume.skill_names, *resume.project_keywords])
@@ -567,3 +567,4 @@ class MatchingService:
 
     def _degree_rank(self, degree: str | None) -> int:
         return DEGREE_RANK.get((degree or "").strip().lower(), 0)
+

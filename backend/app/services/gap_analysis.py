@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from app.clients.llm import MockLLMClient
+from app.clients.llm import BaseLLMClient
 from app.domain.models import GapReport
 from app.repositories.in_memory import ResumeRepository
 from app.services.matching import MatchingService
@@ -11,7 +11,7 @@ class GapAnalysisService:
         self,
         resume_repository: ResumeRepository,
         matching_service: MatchingService,
-        llm_client: MockLLMClient,
+        llm_client: BaseLLMClient,
     ) -> None:
         self.resume_repository = resume_repository
         self.matching_service = matching_service

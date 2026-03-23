@@ -1,4 +1,4 @@
-from flask import Blueprint, current_app, jsonify, request
+﻿from flask import Blueprint, current_app, jsonify, request
 
 from app.domain.models import serialize
 
@@ -20,5 +20,8 @@ def import_jobs():
     if not records:
         return jsonify({"error": "jobs is required"}), 400
 
-    jobs = services.job_pipeline.import_jobs(records)
+    try:
+        jobs = services.job_pipeline.import_jobs(records)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
     return jsonify({"jobs": serialize(jobs), "count": len(jobs)})

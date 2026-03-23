@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from app.clients.document_parser import ResumeDocumentParser
-from app.clients.embedding import SimpleEmbeddingClient
-from app.clients.llm import MockLLMClient
+from app.clients.embedding import BaseEmbeddingClient
+from app.clients.llm import BaseLLMClient
 from app.clients.object_storage import LocalObjectStorageClient
 from app.clients.vector_store import InMemoryVectorStore
 from app.domain.models import (
@@ -22,8 +22,8 @@ class ResumePipelineService:
     def __init__(
         self,
         repository: ResumeRepository,
-        llm_client: MockLLMClient,
-        embedding_client: SimpleEmbeddingClient,
+        llm_client: BaseLLMClient,
+        embedding_client: BaseEmbeddingClient,
         vector_store: InMemoryVectorStore,
         document_parser: ResumeDocumentParser,
         object_storage: LocalObjectStorageClient,
@@ -127,7 +127,7 @@ class ResumePipelineService:
 
     def _build_education(self, payload: dict) -> ResumeEducation:
         return ResumeEducation(
-            school=str(payload.get("school") or "待补充院校"),
+            school=str(payload.get("school") or "寰呰ˉ鍏呴櫌鏍?"),
             degree=payload.get("degree"),
             major=payload.get("major"),
             start_year=payload.get("start_year"),
@@ -136,9 +136,9 @@ class ResumePipelineService:
 
     def _build_work_experience(self, payload: dict) -> ResumeWorkExperience:
         return ResumeWorkExperience(
-            company_name=str(payload.get("company_name") or "待补充公司"),
+            company_name=str(payload.get("company_name") or "寰呰ˉ鍏呭叕鍙?"),
             industry=payload.get("industry"),
-            title=str(payload.get("title") or "待补充岗位"),
+            title=str(payload.get("title") or "寰呰ˉ鍏呭矖浣?"),
             level=payload.get("level"),
             location=payload.get("location"),
             start_date=payload.get("start_date"),
@@ -150,7 +150,7 @@ class ResumePipelineService:
 
     def _build_project(self, payload: dict) -> ResumeProject:
         return ResumeProject(
-            name=str(payload.get("name") or "待补充项目"),
+            name=str(payload.get("name") or "寰呰ˉ鍏呴」鐩?"),
             role=payload.get("role"),
             domain=payload.get("domain"),
             description=payload.get("description"),
@@ -161,7 +161,7 @@ class ResumePipelineService:
 
     def _build_skill(self, payload: dict) -> ResumeSkill:
         return ResumeSkill(
-            name=str(payload.get("name") or "待补充技能"),
+            name=str(payload.get("name") or "寰呰ˉ鍏呮妧鑳?"),
             level=payload.get("level"),
             years=payload.get("years"),
             last_used_year=payload.get("last_used_year"),
@@ -169,6 +169,6 @@ class ResumePipelineService:
 
     def _build_tag(self, payload: dict) -> ResumeTag:
         return ResumeTag(
-            name=str(payload.get("name") or "待补充标签"),
+            name=str(payload.get("name") or "寰呰ˉ鍏呮爣绛?"),
             category=payload.get("category"),
         )

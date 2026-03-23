@@ -1,4 +1,4 @@
-from flask import Blueprint, current_app, jsonify, request
+﻿from flask import Blueprint, current_app, jsonify, request
 
 from app.domain.models import serialize
 
@@ -16,5 +16,7 @@ def recommend_matches():
         matches = services.matching_service.recommend(resume_id, top_k)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 404
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
 
     return jsonify({"matches": serialize(matches)})
