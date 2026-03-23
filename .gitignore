@@ -25,6 +25,9 @@ frontend/node_modules/
 
 backend/.venv/
 backend/uploads/
-
+backend/data/
 .DS_Store
 Thumbs.db
+
+job_data.go
+resume_data.go

@@ -1,8 +1,6 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-import json
 
 from app.clients.document_parser import ResumeDocumentParser
 from app.clients.embedding import BaseEmbeddingClient, QwenEmbeddingClient, SimpleEmbeddingClient
@@ -10,6 +8,7 @@ from app.clients.llm import BaseLLMClient, MockLLMClient, QwenLLMClient
 from app.clients.object_storage import LocalObjectStorageClient
 from app.clients.vector_store import InMemoryVectorStore
 from app.core.config import Settings
+from app.job_seed_loader import load_job_seed_records
 from app.repositories.in_memory import JobRepository, ResumeRepository
 from app.services.gap_analysis import GapAnalysisService
 from app.services.job_pipeline import JobPipelineService
@@ -40,6 +39,7 @@ def build_services(settings: Settings) -> ServiceContainer:
     job_repository = JobRepository()
 
     seed_demo_data(
+        settings=settings,
         resume_repository=resume_repository,
         job_repository=job_repository,
         llm_client=mock_llm_client,
@@ -118,6 +118,7 @@ def _build_embedding_client(settings: Settings) -> BaseEmbeddingClient:
 
 def seed_demo_data(
     *,
+    settings: Settings,
     resume_repository: ResumeRepository,
     job_repository: JobRepository,
     llm_client: BaseLLMClient,
@@ -126,8 +127,7 @@ def seed_demo_data(
     document_parser: ResumeDocumentParser,
     object_storage: LocalObjectStorageClient,
 ) -> None:
-    sample_jobs_path = Path(__file__).resolve().parents[1] / "data" / "sample_jobs.json"
-    job_records = json.loads(sample_jobs_path.read_text(encoding="utf-8"))
+    job_records = load_job_seed_records(settings.job_seed_path, settings.job_seed_limit)
     demo_resume_pipeline = ResumePipelineService(
         repository=resume_repository,
         llm_client=llm_client,

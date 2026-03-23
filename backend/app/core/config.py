@@ -18,6 +18,8 @@ class Settings:
     postgres_dsn: str
     object_storage_bucket: str
     object_storage_root: Path
+    job_seed_path: Path
+    job_seed_limit: int | None
     dashscope_api_key: str
     dashscope_base_url: str
     dashscope_timeout_sec: int
@@ -33,6 +35,14 @@ def get_settings() -> Settings:
     if not storage_root.is_absolute():
         storage_root = BASE_DIR / storage_root
 
+    configured_job_seed_path = os.getenv("JOB_DATA_PATH", "data/sample_jobs.json")
+    job_seed_path = Path(configured_job_seed_path)
+    if not job_seed_path.is_absolute():
+        job_seed_path = BASE_DIR / job_seed_path
+
+    configured_job_seed_limit = os.getenv("JOB_DATA_LIMIT", "").strip()
+    job_seed_limit = int(configured_job_seed_limit) if configured_job_seed_limit else None
+
     return Settings(
         app_name=os.getenv("APP_NAME", "CareerMatch API"),
         debug=os.getenv("FLASK_DEBUG", "0") == "1",
@@ -47,6 +57,8 @@ def get_settings() -> Settings:
         ),
         object_storage_bucket=os.getenv("OBJECT_STORAGE_BUCKET", "careermatch-resumes"),
         object_storage_root=storage_root.resolve(),
+        job_seed_path=job_seed_path.resolve(),
+        job_seed_limit=job_seed_limit,
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY", "").strip(),
         dashscope_base_url=os.getenv(
             "DASHSCOPE_BASE_URL",
