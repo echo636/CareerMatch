@@ -9,7 +9,9 @@ matches_bp = Blueprint("matches", __name__)
 def recommend_matches():
     services = current_app.config["services"]
     payload = request.get_json(silent=True) or {}
-    resume_id = payload.get("resume_id", "demo-resume")
+    resume_id = str(payload.get("resume_id") or "").strip()
+    if not resume_id:
+        return jsonify({"error": "resume_id is required"}), 400
     top_k = int(payload.get("top_k", 5))
 
     try:

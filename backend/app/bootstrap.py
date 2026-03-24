@@ -1,22 +1,23 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
+import sqlite3
+import warnings
 
 from app.clients.document_parser import ResumeDocumentParser
 from app.clients.embedding import BaseEmbeddingClient, QwenEmbeddingClient, SimpleEmbeddingClient
 from app.clients.llm import BaseLLMClient, MockLLMClient, QwenLLMClient
 from app.clients.object_storage import LocalObjectStorageClient
-from app.clients.vector_store import InMemoryVectorStore
+from app.clients.vector_store import BaseVectorStore, SqliteVectorStore
 from app.core.config import Settings
 from app.job_seed_loader import load_job_seed_records
-from app.repositories.in_memory import JobRepository, ResumeRepository
+from app.repositories.sqlite import SqliteJobRepository, SqliteResumeRepository
 from app.services.gap_analysis import GapAnalysisService
 from app.services.job_pipeline import JobPipelineService
 from app.services.matching import MatchingService
 from app.services.resume_pipeline import ResumePipelineService
 
-DEMO_RESUME_TEXT = """
-闄堟櫒 5 骞?Python 涓?AI 搴旂敤缁忛獙銆?鐔熸倝 Flask銆丳ostgreSQL銆丏ocker銆丩LM銆丒mbedding銆丳rompt Design銆?鍋氳繃绠€鍘嗚В鏋愩€佸矖浣嶅尮閰嶃€佽涔夋绱㈠拰璇勫垎绯荤粺鐩稿叧椤圭洰锛屾湡鏈涜柂璧?25000 35000銆?""".strip()
+REMOTE_EMBEDDING_STARTUP_JOB_LIMIT = 20
 
 
 @dataclass(slots=True)
@@ -32,21 +33,18 @@ def build_services(settings: Settings) -> ServiceContainer:
     mock_llm_client = MockLLMClient()
     llm_client = _build_llm_client(settings, mock_llm_client)
     embedding_client = _build_embedding_client(settings)
-    vector_store = InMemoryVectorStore()
+    vector_store = SqliteVectorStore(settings.app_state_db_path)
     document_parser = ResumeDocumentParser()
     object_storage = LocalObjectStorageClient(settings.object_storage_root)
-    resume_repository = ResumeRepository()
-    job_repository = JobRepository()
+    resume_repository = SqliteResumeRepository(settings.app_state_db_path)
+    job_repository = SqliteJobRepository(settings.app_state_db_path)
 
-    seed_demo_data(
+    initialize_persistent_data(
         settings=settings,
-        resume_repository=resume_repository,
         job_repository=job_repository,
         llm_client=mock_llm_client,
         embedding_client=embedding_client,
         vector_store=vector_store,
-        document_parser=document_parser,
-        object_storage=object_storage,
     )
 
     resume_pipeline = ResumePipelineService(
@@ -116,36 +114,47 @@ def _build_embedding_client(settings: Settings) -> BaseEmbeddingClient:
     raise ValueError(f"Unsupported EMBEDDING_PROVIDER '{settings.embedding_provider}'.")
 
 
-def seed_demo_data(
+def _seed_job_limit(settings: Settings) -> int | None:
+    if settings.job_seed_limit is not None:
+        return settings.job_seed_limit
+    if settings.embedding_provider == "qwen":
+        warnings.warn(
+            "EMBEDDING_PROVIDER=qwen without JOB_DATA_LIMIT would request remote embeddings for every seeded job. "
+            f"Capping startup seed load to {REMOTE_EMBEDDING_STARTUP_JOB_LIMIT} jobs. "
+            "Set JOB_DATA_LIMIT explicitly to override.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return REMOTE_EMBEDDING_STARTUP_JOB_LIMIT
+    return None
+
+
+def _remove_legacy_demo_resume(settings: Settings) -> None:
+    with sqlite3.connect(settings.app_state_db_path) as connection:
+        connection.execute("DELETE FROM resumes WHERE id = 'demo-resume'")
+        connection.execute(
+            "DELETE FROM vectors WHERE namespace = 'resumes' AND item_id = 'demo-resume'"
+        )
+        connection.commit()
+
+
+def initialize_persistent_data(
     *,
     settings: Settings,
-    resume_repository: ResumeRepository,
-    job_repository: JobRepository,
+    job_repository: SqliteJobRepository,
     llm_client: BaseLLMClient,
     embedding_client: BaseEmbeddingClient,
-    vector_store: InMemoryVectorStore,
-    document_parser: ResumeDocumentParser,
-    object_storage: LocalObjectStorageClient,
+    vector_store: BaseVectorStore,
 ) -> None:
-    job_records = load_job_seed_records(settings.job_seed_path, settings.job_seed_limit)
-    demo_resume_pipeline = ResumePipelineService(
-        repository=resume_repository,
-        llm_client=llm_client,
-        embedding_client=embedding_client,
-        vector_store=vector_store,
-        document_parser=document_parser,
-        object_storage=object_storage,
-    )
-    demo_job_pipeline = JobPipelineService(
+    _remove_legacy_demo_resume(settings)
+    if job_repository.count() > 0:
+        return
+
+    job_records = load_job_seed_records(settings.job_seed_path, _seed_job_limit(settings))
+    job_pipeline = JobPipelineService(
         repository=job_repository,
         llm_client=llm_client,
         embedding_client=embedding_client,
         vector_store=vector_store,
     )
-    demo_resume_pipeline.process_resume(
-        file_name="闄堟櫒_demo_resume.pdf",
-        raw_text=DEMO_RESUME_TEXT,
-        resume_id="demo-resume",
-        source_content_type="application/pdf",
-    )
-    demo_job_pipeline.import_jobs(job_records)
+    job_pipeline.import_jobs(job_records)

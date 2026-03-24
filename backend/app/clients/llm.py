@@ -406,10 +406,18 @@ class QwenLLMClient(BaseLLMClient):
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
                 return json.loads(response.read().decode("utf-8"))
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Qwen chat request timed out after {self.timeout_sec} seconds."
+            ) from exc
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Qwen chat request failed with status {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise RuntimeError(
+                    f"Qwen chat request timed out after {self.timeout_sec} seconds."
+                ) from exc
             raise RuntimeError(f"Qwen chat request failed: {exc.reason}") from exc
     def _message_content_to_text(self, content: Any) -> str:
         if isinstance(content, str):
@@ -790,4 +798,5 @@ class QwenLLMClient(BaseLLMClient):
         if salary_min is not None and salary_max is not None and salary_min > salary_max:
             salary_min, salary_max = salary_max, salary_min
         return salary_min, salary_max
+
 

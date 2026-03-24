@@ -1,10 +1,11 @@
 ﻿from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from app.clients.embedding import BaseEmbeddingClient
 from app.clients.llm import BaseLLMClient
-from app.clients.vector_store import InMemoryVectorStore
+from app.clients.vector_store import BaseVectorStore
 from app.domain.models import (
     BonusExperience,
     BonusSkill,
@@ -20,16 +21,15 @@ from app.domain.models import (
     OptionalSkillGroup,
     RequiredSkill,
 )
-from app.repositories.in_memory import JobRepository
 
 
 class JobPipelineService:
     def __init__(
         self,
-        repository: JobRepository,
+        repository,
         llm_client: BaseLLMClient,
         embedding_client: BaseEmbeddingClient,
-        vector_store: InMemoryVectorStore,
+        vector_store: BaseVectorStore,
     ) -> None:
         self.repository = repository
         self.llm_client = llm_client
@@ -39,8 +39,7 @@ class JobPipelineService:
     def import_jobs(self, records: list[dict[str, Any]]) -> list[JobProfile]:
         normalized_jobs = [self._normalize(record) for record in records]
         for job in normalized_jobs:
-            vector = self.embedding_client.embed_text(self._vector_payload(job))
-            self.vector_store.upsert("jobs", job.id, vector)
+            self._ensure_vector("jobs", job.id, self._vector_payload(job))
         return self.repository.save_many(normalized_jobs)
 
     def list_jobs(self) -> list[JobProfile]:
@@ -65,9 +64,18 @@ class JobPipelineService:
     def _vector_payload(self, job: JobProfile) -> str:
         return " ".join([job.summary, *job.skills, *job.project_keywords])
 
+    def _ensure_vector(self, namespace: str, item_id: str, payload: str) -> list[float]:
+        payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        cached = self.vector_store.get(namespace, item_id)
+        if cached is not None and cached.payload_hash == payload_hash:
+            return cached.vector
+        vector = self.embedding_client.embed_text(payload)
+        self.vector_store.upsert(namespace, item_id, vector, payload_hash)
+        return vector
+
     def _build_basic_info(self, payload: dict[str, Any]) -> JobBasicInfo:
         return JobBasicInfo(
-            title=str(payload.get("title") or "鏈懡鍚嶅矖浣?"),
+            title=str(payload.get("title") or "Untitled Role"),
             department=payload.get("department"),
             location=payload.get("location"),
             job_type=payload.get("job_type"),
@@ -115,7 +123,7 @@ class JobPipelineService:
 
     def _build_required_skill(self, payload: dict[str, Any]) -> RequiredSkill:
         return RequiredSkill(
-            name=str(payload.get("name") or "寰呰ˉ鍏呮妧鑳?"),
+            name=str(payload.get("name") or "Skill Pending"),
             level=payload.get("level"),
             min_years=payload.get("min_years"),
             description=payload.get("description"),
@@ -123,7 +131,7 @@ class JobPipelineService:
 
     def _build_optional_group(self, payload: dict[str, Any]) -> OptionalSkillGroup:
         return OptionalSkillGroup(
-            group_name=str(payload.get("group_name") or "鍙€夋妧鑳界粍"),
+            group_name=str(payload.get("group_name") or "Optional Skills"),
             description=payload.get("description"),
             min_required=int(payload.get("min_required", 1)),
             skills=[self._build_optional_skill(item) for item in payload.get("skills") or []],
@@ -131,14 +139,14 @@ class JobPipelineService:
 
     def _build_optional_skill(self, payload: dict[str, Any]) -> OptionalSkill:
         return OptionalSkill(
-            name=str(payload.get("name") or "寰呰ˉ鍏呮妧鑳?"),
+            name=str(payload.get("name") or "Skill Pending"),
             level=payload.get("level"),
             description=payload.get("description"),
         )
 
     def _build_bonus_skill(self, payload: dict[str, Any]) -> BonusSkill:
         return BonusSkill(
-            name=str(payload.get("name") or "寰呰ˉ鍏呮妧鑳?"),
+            name=str(payload.get("name") or "Skill Pending"),
             weight=payload.get("weight"),
             description=payload.get("description"),
         )
@@ -146,7 +154,7 @@ class JobPipelineService:
     def _build_core_experience(self, payload: dict[str, Any]) -> CoreExperience:
         return CoreExperience(
             type=str(payload.get("type") or "project"),
-            name=str(payload.get("name") or "寰呰ˉ鍏呯粡楠?"),
+            name=str(payload.get("name") or "Experience Pending"),
             min_years=payload.get("min_years"),
             description=payload.get("description"),
             keywords=list(payload.get("keywords") or []),
@@ -155,7 +163,7 @@ class JobPipelineService:
     def _build_bonus_experience(self, payload: dict[str, Any]) -> BonusExperience:
         return BonusExperience(
             type=str(payload.get("type") or "project"),
-            name=str(payload.get("name") or "寰呰ˉ鍏呯粡楠?"),
+            name=str(payload.get("name") or "Experience Pending"),
             weight=payload.get("weight"),
             description=payload.get("description"),
             keywords=list(payload.get("keywords") or []),
@@ -163,14 +171,14 @@ class JobPipelineService:
 
     def _build_language(self, payload: dict[str, Any]) -> LanguageRequirement:
         return LanguageRequirement(
-            language=str(payload.get("language") or "寰呰ˉ鍏呰瑷€"),
+            language=str(payload.get("language") or "Language Pending"),
             level=payload.get("level"),
             required=bool(payload.get("required", False)),
         )
 
     def _build_tag(self, payload: dict[str, Any]) -> JobTag:
         return JobTag(
-            name=str(payload.get("name") or "寰呰ˉ鍏呮爣绛?"),
+            name=str(payload.get("name") or "Tag Pending"),
             category=payload.get("category"),
             weight=payload.get("weight"),
         )

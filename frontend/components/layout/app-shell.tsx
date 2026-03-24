@@ -1,11 +1,10 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import type { PropsWithChildren } from "react";
 
 const navItems = [
-  { href: "/", label: "架构总览" },
-  { href: "/resume", label: "简历处理" },
+  { href: "/", label: "系统概览" },
+  { href: "/resume", label: "上传简历" },
   { href: "/matches", label: "匹配结果" },
-  { href: "/admin/jobs", label: "岗位导入" },
 ] as const;
 
 type AppRoute = (typeof navItems)[number]["href"];
@@ -20,7 +19,7 @@ export function AppShell({ activePath, children }: AppShellProps) {
       <header className="topbar">
         <div>
           <p className="eyebrow">CareerMatch</p>
-          <h1>AI 简历岗位智能匹配系统</h1>
+          <h1>简历与岗位智能匹配</h1>
         </div>
         <nav className="nav-grid" aria-label="Primary navigation">
           {navItems.map((item) => {

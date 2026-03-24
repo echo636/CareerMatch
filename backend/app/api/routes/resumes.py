@@ -8,13 +8,6 @@ from app.domain.models import serialize
 resumes_bp = Blueprint("resumes", __name__)
 
 
-@resumes_bp.get("/demo")
-def get_demo_resume():
-    services = current_app.config["services"]
-    resume = services.resume_pipeline.get_resume("demo-resume")
-    return jsonify({"resume": serialize(resume)})
-
-
 @resumes_bp.get("/<resume_id>")
 def get_resume(resume_id: str):
     services = current_app.config["services"]

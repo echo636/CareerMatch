@@ -1,10 +1,12 @@
 ﻿from __future__ import annotations
 
+import hashlib
+
 from app.clients.document_parser import ResumeDocumentParser
 from app.clients.embedding import BaseEmbeddingClient
 from app.clients.llm import BaseLLMClient
 from app.clients.object_storage import LocalObjectStorageClient
-from app.clients.vector_store import InMemoryVectorStore
+from app.clients.vector_store import BaseVectorStore
 from app.domain.models import (
     ResumeBasicInfo,
     ResumeEducation,
@@ -15,16 +17,15 @@ from app.domain.models import (
     ResumeWorkExperience,
     SalaryRange,
 )
-from app.repositories.in_memory import ResumeRepository
 
 
 class ResumePipelineService:
     def __init__(
         self,
-        repository: ResumeRepository,
+        repository,
         llm_client: BaseLLMClient,
         embedding_client: BaseEmbeddingClient,
-        vector_store: InMemoryVectorStore,
+        vector_store: BaseVectorStore,
         document_parser: ResumeDocumentParser,
         object_storage: LocalObjectStorageClient,
     ) -> None:
@@ -66,8 +67,7 @@ class ResumePipelineService:
             source_content_type=source_content_type,
             source_object_key=source_object_key,
         )
-        vector = self.embedding_client.embed_text(self._vector_payload(resume))
-        self.vector_store.upsert("resumes", resume.id, vector)
+        self._ensure_vector("resumes", resume.id, self._vector_payload(resume))
         return self.repository.save(resume)
 
     def process_uploaded_resume(
@@ -99,6 +99,15 @@ class ResumePipelineService:
     def _vector_payload(self, resume: ResumeProfile) -> str:
         return " ".join([resume.summary, *resume.skill_names, *resume.project_keywords])
 
+    def _ensure_vector(self, namespace: str, item_id: str, payload: str) -> list[float]:
+        payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        cached = self.vector_store.get(namespace, item_id)
+        if cached is not None and cached.payload_hash == payload_hash:
+            return cached.vector
+        vector = self.embedding_client.embed_text(payload)
+        self.vector_store.upsert(namespace, item_id, vector, payload_hash)
+        return vector
+
     def _build_basic_info(self, payload: dict, file_name: str) -> ResumeBasicInfo:
         return ResumeBasicInfo(
             name=str(payload.get("name") or file_name),
@@ -127,7 +136,7 @@ class ResumePipelineService:
 
     def _build_education(self, payload: dict) -> ResumeEducation:
         return ResumeEducation(
-            school=str(payload.get("school") or "寰呰ˉ鍏呴櫌鏍?"),
+            school=str(payload.get("school") or "School Pending"),
             degree=payload.get("degree"),
             major=payload.get("major"),
             start_year=payload.get("start_year"),
@@ -136,9 +145,9 @@ class ResumePipelineService:
 
     def _build_work_experience(self, payload: dict) -> ResumeWorkExperience:
         return ResumeWorkExperience(
-            company_name=str(payload.get("company_name") or "寰呰ˉ鍏呭叕鍙?"),
+            company_name=str(payload.get("company_name") or "Company Pending"),
             industry=payload.get("industry"),
-            title=str(payload.get("title") or "寰呰ˉ鍏呭矖浣?"),
+            title=str(payload.get("title") or "Role Pending"),
             level=payload.get("level"),
             location=payload.get("location"),
             start_date=payload.get("start_date"),
@@ -150,7 +159,7 @@ class ResumePipelineService:
 
     def _build_project(self, payload: dict) -> ResumeProject:
         return ResumeProject(
-            name=str(payload.get("name") or "寰呰ˉ鍏呴」鐩?"),
+            name=str(payload.get("name") or "Project Pending"),
             role=payload.get("role"),
             domain=payload.get("domain"),
             description=payload.get("description"),
@@ -161,7 +170,7 @@ class ResumePipelineService:
 
     def _build_skill(self, payload: dict) -> ResumeSkill:
         return ResumeSkill(
-            name=str(payload.get("name") or "寰呰ˉ鍏呮妧鑳?"),
+            name=str(payload.get("name") or "Skill Pending"),
             level=payload.get("level"),
             years=payload.get("years"),
             last_used_year=payload.get("last_used_year"),
@@ -169,6 +178,6 @@ class ResumePipelineService:
 
     def _build_tag(self, payload: dict) -> ResumeTag:
         return ResumeTag(
-            name=str(payload.get("name") or "寰呰ˉ鍏呮爣绛?"),
+            name=str(payload.get("name") or "Tag Pending"),
             category=payload.get("category"),
         )

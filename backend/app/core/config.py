@@ -20,6 +20,7 @@ class Settings:
     object_storage_root: Path
     job_seed_path: Path
     job_seed_limit: int | None
+    app_state_db_path: Path
     dashscope_api_key: str
     dashscope_base_url: str
     dashscope_timeout_sec: int
@@ -43,6 +44,11 @@ def get_settings() -> Settings:
     configured_job_seed_limit = os.getenv("JOB_DATA_LIMIT", "").strip()
     job_seed_limit = int(configured_job_seed_limit) if configured_job_seed_limit else None
 
+    configured_state_db_path = os.getenv("APP_STATE_DB_PATH", "data/app_state.sqlite3")
+    app_state_db_path = Path(configured_state_db_path)
+    if not app_state_db_path.is_absolute():
+        app_state_db_path = BASE_DIR / app_state_db_path
+
     return Settings(
         app_name=os.getenv("APP_NAME", "CareerMatch API"),
         debug=os.getenv("FLASK_DEBUG", "0") == "1",
@@ -59,6 +65,7 @@ def get_settings() -> Settings:
         object_storage_root=storage_root.resolve(),
         job_seed_path=job_seed_path.resolve(),
         job_seed_limit=job_seed_limit,
+        app_state_db_path=app_state_db_path.resolve(),
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY", "").strip(),
         dashscope_base_url=os.getenv(
             "DASHSCOPE_BASE_URL",

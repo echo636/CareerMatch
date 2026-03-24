@@ -1,7 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+import hashlib
 
 from app.clients.embedding import BaseEmbeddingClient
-from app.clients.vector_store import InMemoryVectorStore
+from app.clients.vector_store import BaseVectorStore
 from app.domain.models import (
     BonusExperience,
     BonusSkill,
@@ -42,7 +44,7 @@ class MatchingService:
         job_repository: JobRepository,
         resume_repository: ResumeRepository,
         embedding_client: BaseEmbeddingClient,
-        vector_store: InMemoryVectorStore,
+        vector_store: BaseVectorStore,
     ) -> None:
         self.job_repository = job_repository
         self.resume_repository = resume_repository
@@ -54,7 +56,7 @@ class MatchingService:
         if resume is None:
             raise ValueError(f"Resume '{resume_id}' does not exist.")
 
-        resume_vector = self.embedding_client.embed_text(self._resume_payload(resume))
+        resume_vector = self._ensure_resume_vector(resume)
         recall_size = max(top_k * 3, top_k)
         recalled = self.vector_store.query("jobs", resume_vector, recall_size)
 
@@ -185,6 +187,16 @@ class MatchingService:
 
     def _resume_payload(self, resume: ResumeProfile) -> str:
         return " ".join([resume.summary, *resume.skill_names, *resume.project_keywords])
+
+    def _ensure_resume_vector(self, resume: ResumeProfile) -> list[float]:
+        payload = self._resume_payload(resume)
+        payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        cached = self.vector_store.get("resumes", resume.id)
+        if cached is not None and cached.payload_hash == payload_hash:
+            return cached.vector
+        vector = self.embedding_client.embed_text(payload)
+        self.vector_store.upsert("resumes", resume.id, vector, payload_hash)
+        return vector
 
     def _build_candidate_skill_index(self, resume: ResumeProfile) -> dict[str, dict[str, float | str | None]]:
         index: dict[str, dict[str, float | str | None]] = {}

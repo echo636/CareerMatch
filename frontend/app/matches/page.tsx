@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { RadarPlaceholder } from "@/components/charts/radar-placeholder";
 import { AppShell } from "@/components/layout/app-shell";
 import { ScorePill } from "@/components/sections/score-pill";
 import { SectionCard } from "@/components/sections/section-card";
@@ -12,7 +11,7 @@ function normalizeParam(value: string | string[] | undefined): string | undefine
 }
 
 function getResumeSummary(resume: ResumeProfile): string {
-  return resume.basicInfo.summary ?? resume.basicInfo.selfEvaluation ?? "候选人简历摘要待补充。";
+  return resume.basicInfo.summary ?? resume.basicInfo.selfEvaluation ?? "暂无简历摘要。";
 }
 
 function getResumeSkillNames(resume: ResumeProfile): string[] {
@@ -20,7 +19,7 @@ function getResumeSkillNames(resume: ResumeProfile): string[] {
 }
 
 function getJobSummary(job: JobProfile): string {
-  return job.basicInfo.summary ?? job.basicInfo.responsibilities?.join("；") ?? "岗位说明待补充。";
+  return job.basicInfo.summary ?? job.basicInfo.responsibilities?.join(" / ") ?? "暂无岗位说明。";
 }
 
 type MatchesPageProps = {
@@ -29,147 +28,120 @@ type MatchesPageProps = {
 
 export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const resolvedSearchParams = (await searchParams) ?? {};
-  const resumeId = normalizeParam(resolvedSearchParams.resumeId) ?? "demo-resume";
+  const resumeId = normalizeParam(resolvedSearchParams.resumeId);
   const [resume, matches, report] = await Promise.all([
     getResumePreview(resumeId),
     getMatchOverview(resumeId),
     getGapReport(resumeId),
   ]);
+
   const leadMatch = matches[0] ?? null;
-  const resumeSkills = getResumeSkillNames(resume);
-  const resumeSummary = getResumeSummary(resume);
+  const resumeSkills = resume ? getResumeSkillNames(resume) : [];
+  const resumeSummary = resume ? getResumeSummary(resume) : "";
 
   return (
     <AppShell activePath="/matches">
-      <SectionCard
-        title="候选人画像"
-        description="当前结果页根据 resumeId 拉取结构化简历、匹配结果和 Gap 报告。"
-        accent={<span className="accent-score">{resume.id}</span>}
-      >
-        <div className="resume-overview">
-          <div>
-            <p className="eyebrow">当前简历</p>
-            <h3>{resume.basicInfo.name}</h3>
-            <p>{resumeSummary}</p>
-            {resume.basicInfo.currentTitle ? <p>当前职级：{resume.basicInfo.currentTitle}</p> : null}
-            {resume.basicInfo.currentCity ? <p>当前城市：{resume.basicInfo.currentCity}</p> : null}
-            {resume.sourceFileName ? <p>来源文件：{resume.sourceFileName}</p> : null}
-            {resume.sourceObjectKey ? <p>对象存储键：{resume.sourceObjectKey}</p> : null}
-          </div>
-          <div className="pill-row">
-            <ScorePill label="工作年限" value={Math.min((resume.basicInfo.workYears ?? 0) / 10, 1)} />
-            <ScorePill label="技能数量" value={Math.min(resumeSkills.length / 10, 1)} />
-            <ScorePill label="目标薪资" value={Math.min(resume.expectedSalary.max / 50000, 1)} />
-          </div>
-          <div className="tag-row">
-            {resumeSkills.map((skill) => (
-              <span key={skill} className="tag">
-                {skill}
-              </span>
-            ))}
-          </div>
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        title="Top N 匹配结果"
-        description="结果页展示粗排、过滤、精排之后的输出，包含可解释评分与缺口信息。"
-        accent={leadMatch ? <span className="accent-score">{Math.round(leadMatch.breakdown.total * 100)}%</span> : undefined}
-      >
-        {leadMatch ? (
-          <>
-            <div className="lead-match">
-              <div>
-                <p className="eyebrow">最高匹配岗位</p>
-                <h3>
-                  {leadMatch.job.basicInfo.title} / {leadMatch.job.company}
-                </h3>
-                <p>{leadMatch.reasoning}</p>
-              </div>
-              <div className="pill-row">
-                <ScorePill label="向量召回" value={leadMatch.breakdown.vectorSimilarity} />
-                <ScorePill label="技能匹配" value={leadMatch.breakdown.skillMatch} />
-                <ScorePill label="经验匹配" value={leadMatch.breakdown.experienceMatch} />
-                <ScorePill label="教育匹配" value={leadMatch.breakdown.educationMatch} />
-                <ScorePill label="薪资匹配" value={leadMatch.breakdown.salaryMatch} />
-              </div>
+      <SectionCard title="简历概览" description="展示当前简历的核心信息。">
+        {resume ? (
+          <div className="resume-overview">
+            <div>
+              <p className="eyebrow">当前简历</p>
+              <h3>{resume.basicInfo.name}</h3>
+              <p>{resumeSummary}</p>
+              {resume.basicInfo.currentTitle ? <p>当前职位：{resume.basicInfo.currentTitle}</p> : null}
+              {resume.basicInfo.currentCity ? <p>所在城市：{resume.basicInfo.currentCity}</p> : null}
+              {resume.sourceFileName ? <p>文件名：{resume.sourceFileName}</p> : null}
             </div>
-
-            <div className="match-list">
-              {matches.map((match) => (
-                <article key={match.job.id} className="match-card">
-                  <div className="match-card-header">
-                    <div>
-                      <h3>{match.job.basicInfo.title}</h3>
-                      <p>
-                        {match.job.company} · {match.job.basicInfo.location ?? "远程"}
-                      </p>
-                    </div>
-                    <strong>{Math.round(match.breakdown.total * 100)}%</strong>
-                  </div>
-                  <p>{getJobSummary(match.job)}</p>
-                  <div className="pill-row">
-                    <ScorePill label="技能" value={match.breakdown.skillMatch} />
-                    <ScorePill label="经验" value={match.breakdown.experienceMatch} />
-                    <ScorePill label="教育" value={match.breakdown.educationMatch} />
-                  </div>
-                  <div className="tag-row">
-                    {match.matchedSkills.map((skill) => (
-                      <span key={skill} className="tag">
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="muted">
-                    待补齐：{match.missingSkills.length > 0 ? match.missingSkills.join(" / ") : "当前无明显缺口"}
-                  </p>
-                </article>
+            <div className="pill-row">
+              <ScorePill label="工作年限" value={Math.min((resume.basicInfo.workYears ?? 0) / 10, 1)} />
+              <ScorePill label="技能数量" value={Math.min(resumeSkills.length / 10, 1)} />
+              <ScorePill label="期望薪资" value={Math.min(resume.expectedSalary.max / 50000, 1)} />
+            </div>
+            <div className="tag-row">
+              {resumeSkills.map((skill) => (
+                <span key={skill} className="tag">
+                  {skill}
+                </span>
               ))}
             </div>
-          </>
+          </div>
         ) : (
           <div className="empty-state">
-            <p>当前简历还没有可展示的匹配结果。请先确认后端服务已启动，并重新上传简历文本。</p>
+            <p>当前没有可展示的简历结果。请先上传一份真实简历，再通过带有 resumeId 的链接进入结果页。</p>
             <Link href="/resume" className="primary-link">
-              返回简历处理页
+              去上传简历
             </Link>
           </div>
         )}
       </SectionCard>
 
       <SectionCard
-        title="Gap 分析"
-        description="从高匹配岗位生成对照组，输出技能、经验与薪资的结构化差距。"
+        title="推荐岗位"
+        description="按当前简历筛选出的岗位结果。"
+        accent={leadMatch ? <span className="accent-score">{Math.round(leadMatch.breakdown.total * 100)}%</span> : undefined}
       >
-        {matches.length > 0 ? (
-          <div className="split-grid">
-            <RadarPlaceholder
-              values={{
-                skills: leadMatch?.breakdown.skillMatch ?? 0,
-                experience: leadMatch?.breakdown.experienceMatch ?? 0,
-                salary: leadMatch?.breakdown.salaryMatch ?? 0,
-                growth: report.missingSkills.length > 0 ? 0.82 : 0.95,
-              }}
-            />
-            <div className="insight-list">
-              <p className="eyebrow">Gap Report</p>
-              <p>对照岗位：{report.baselineRoles.join(" / ")}</p>
-              <p>待补技能：{report.missingSkills.join(" / ") || "暂无"}</p>
-              <p>经验差距：{report.experienceGapYears} 年</p>
-              <p>目标薪资差：{report.salaryGap} 元 / 月</p>
-              {report.insights.map((insight) => (
-                <article key={insight.dimension} className="insight-card">
-                  <h3>{insight.dimension}</h3>
-                  <p>{insight.currentState}</p>
-                  <p>{insight.targetState}</p>
-                  <p className="muted">{insight.suggestion}</p>
-                </article>
-              ))}
-            </div>
+        {leadMatch ? (
+          <div className="match-list">
+            {matches.map((match) => (
+              <article key={match.job.id} className="match-card">
+                <div className="match-card-header">
+                  <div>
+                    <h3>{match.job.basicInfo.title}</h3>
+                    <p>
+                      {match.job.company} / {match.job.basicInfo.location ?? "远程"}
+                    </p>
+                  </div>
+                  <strong>{Math.round(match.breakdown.total * 100)}%</strong>
+                </div>
+                <p>{getJobSummary(match.job)}</p>
+                <div className="pill-row">
+                  <ScorePill label="技能契合" value={match.breakdown.skillMatch} />
+                  <ScorePill label="经验契合" value={match.breakdown.experienceMatch} />
+                </div>
+                {match.matchedSkills.length > 0 ? (
+                  <div className="tag-row">
+                    {match.matchedSkills.slice(0, 6).map((skill) => (
+                      <span key={skill} className="tag">
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <p className="muted">
+                  缺少技能：{match.missingSkills.length > 0 ? match.missingSkills.join(" / ") : "暂无明显缺口"}
+                </p>
+              </article>
+            ))}
           </div>
         ) : (
           <div className="empty-state">
-            <p>Gap 分析依赖匹配结果。当前没有可用岗位对照组。</p>
+            <p>当前没有可展示的匹配结果。通常意味着简历尚未上传、后台岗位库尚未准备好，或召回后的岗位都被过滤掉了。</p>
+            <Link href="/resume" className="primary-link">
+              返回上传页
+            </Link>
+          </div>
+        )}
+      </SectionCard>
+
+      <SectionCard title="差距分析" description="只保留用户关心的差距结论和建议。">
+        {matches.length > 0 ? (
+          <div className="insight-list">
+            <p>对照岗位：{report.baselineRoles.join(" / ") || "暂无"}</p>
+            <p>缺少技能：{report.missingSkills.join(" / ") || "暂无"}</p>
+            <p>经验差距：{report.experienceGapYears} 年</p>
+            <p>薪资差距：{report.salaryGap} 元 / 月</p>
+            {report.insights.map((insight) => (
+              <article key={insight.dimension} className="insight-card">
+                <h3>{insight.dimension}</h3>
+                <p>{insight.currentState}</p>
+                <p>{insight.targetState}</p>
+                <p className="muted">{insight.suggestion}</p>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <p>差距分析依赖有效的匹配结果。请先上传简历，并确认后台岗位库已经准备完成。</p>
           </div>
         )}
       </SectionCard>

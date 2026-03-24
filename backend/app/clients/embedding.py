@@ -72,8 +72,17 @@ class QwenEmbeddingClient(BaseEmbeddingClient):
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
                 return json.loads(response.read().decode("utf-8"))
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Qwen embedding request timed out after {self.timeout_sec} seconds."
+            ) from exc
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Qwen embedding request failed with status {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise RuntimeError(
+                    f"Qwen embedding request timed out after {self.timeout_sec} seconds."
+                ) from exc
             raise RuntimeError(f"Qwen embedding request failed: {exc.reason}") from exc
+

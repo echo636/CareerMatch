@@ -1,20 +1,20 @@
 ﻿# Qwen Integration
 
-The backend now supports switching from mock AI to real Qwen services without changing the API contract used by the frontend.
+The backend now supports switching from mock AI to real Qwen services without changing the user-facing API used by the frontend.
 
 ## What changed
 
-- `LLM_PROVIDER` controls whether resume extraction, job structuring, and gap insights use `mock` or `qwen`.
+- `LLM_PROVIDER` controls whether resume extraction and gap insights use `mock` or `qwen`.
 - `EMBEDDING_PROVIDER` controls whether vectorization uses the local hash embedding or Qwen embeddings.
-- Demo seed data still uses the mock extractor to avoid paying for LLM calls on every backend startup.
+- Startup seed jobs still use the mock extractor to avoid paying for LLM calls on every backend startup.
 - If a Qwen request fails, the API returns `502` instead of silently corrupting the response shape.
 
 ## Recommended rollout
 
 1. Start with `LLM_PROVIDER=qwen` and `EMBEDDING_PROVIDER=mock`.
-2. Verify `POST /api/resumes/upload`, `POST /api/jobs/import`, and `POST /api/gap/report`.
+2. Verify `POST /api/resumes/upload` and `POST /api/gap/report`.
 3. After the structured output quality is acceptable, switch `EMBEDDING_PROVIDER=qwen`.
-4. Re-import jobs and re-upload resumes so all stored vectors share the same embedding model.
+4. Re-import jobs with `python backend/import_jobs_offline.py ...` and re-upload resumes so all stored vectors share the same embedding model.
 
 ## Environment variables
 
@@ -37,10 +37,12 @@ After starting the backend, verify:
 
 - `GET /api/health` returns the selected providers and models.
 - Upload a real resume and confirm the response still contains `basicInfo`, `skills`, `projects`, and `expectedSalary`.
-- Import a raw JD payload and confirm `skillRequirements`, `experienceRequirements`, and `educationConstraints` are filled.
+- Run the offline job import script and confirm the persistent store contains jobs plus vectors.
+
+For a repeatable real-LLM test flow, see `docs/resume-flow-testing.md`.
 
 ## Notes
 
 - The Qwen client uses DashScope's OpenAI-compatible endpoint.
 - Structured extraction uses JSON-mode output plus local normalization, so downstream services keep the same shape even when the model omits optional fields.
-- If you change the embedding model or dimensions, rebuild the in-memory or vector index from fresh source data.
+- If you change the embedding model or dimensions, rebuild the persistent vectors from fresh source data.
