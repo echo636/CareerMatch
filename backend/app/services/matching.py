@@ -85,7 +85,7 @@ class MatchingService:
                 )
                 continue
 
-            passed_filters, filter_reason = self._filter_decision(resume, job, candidate_skill_index)
+            passed_filters, filter_reason = self._filter_decision(resume, job)
             if not passed_filters:
                 filtered_out += 1
                 candidate_logs.append(
@@ -167,23 +167,9 @@ class MatchingService:
         self,
         resume: ResumeProfile,
         job: JobProfile,
-        candidate_skill_index: dict[str, dict[str, float | str | None]],
     ) -> tuple[bool, str]:
-        required_scores = self._required_skill_scores(job, candidate_skill_index)
-        if required_scores and min(required_scores) < 0.6:
-            return False, "required_skill_below_threshold"
-
-        if job.experience_requirements.min_total_years and self._total_years_score(resume, job) < 0.55:
-            return False, "experience_below_threshold"
-
         if self._minimum_degree_gate(resume, job.education_constraints) < 0.5:
             return False, "education_below_threshold"
-
-        if not job.has_salary_reference:
-            return True, "passed"
-        salary_gap = resume.expected_salary.min - job.salary_range.max
-        if salary_gap > 8000:
-            return False, "salary_gap_too_large"
         return True, "passed"
 
     def _build_breakdown(

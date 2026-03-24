@@ -1,0 +1,700 @@
+{
+  "run_at": "2026-03-24T20:46:17+08:00",
+  "settings": {
+    "state_db": "D:\\constructing_projects\\CareerMatch\\backend\\data\\app_state.sqlite3",
+    "upload_root": "D:\\constructing_projects\\CareerMatch\\backend\\uploads\\resumes",
+    "llm_provider": "qwen",
+    "embedding_provider": "qwen",
+    "job_count": 150,
+    "persisted_resume_count": 3
+  },
+  "selection": {
+    "selected_resume_ids": [
+      "resume-19900b96",
+      "upload-smoke-7bd2c1c5"
+    ],
+    "hydrate_missing": false,
+    "top_k": 3,
+    "limit": 2
+  },
+  "processed": [
+    {
+      "resume_id": "resume-19900b96",
+      "resume_source": "persisted",
+      "resume_snapshot": {
+        "resume_id": "resume-19900b96",
+        "name": "陈冬华",
+        "current_title": "AI 应用工程师",
+        "current_company": null,
+        "work_years": 9,
+        "first_degree": null,
+        "expected_salary": {
+          "min": 25000,
+          "max": 35000,
+          "currency": "CNY"
+        },
+        "skill_count": 20,
+        "project_count": 4,
+        "work_experience_count": 5,
+        "skills_sample": [
+          "Java",
+          "Spring Boot",
+          "Spring Cloud",
+          "MyBatis / MyBatis-Plus",
+          "Redis",
+          "RabbitMQ",
+          "Kafka",
+          "Nacos"
+        ],
+        "project_keywords_sample": [
+          "线上在线问诊开药平台",
+          "区域与院内单病种质量控制平台",
+          "国家单病种质量管理与控制平台",
+          "医疗大数据中台（标签中心 & 用户画像）",
+          "医疗大数据",
+          "医疗质量控制",
+          "单病种管理",
+          "国家卫健委"
+        ],
+        "summary_excerpt": "后端技术负责人 / 架构型高级工程师，9 年 Java / 分布式系统实战经验，长期一线写代码。曾任医疗大数据公司技术负责人，主导多个国家卫健委国家级平台的架构设计与核心研发。擅长 Spring Cloud 微服务、高并发系统、数据治理、中台架构、性能优化。具备 0→1 平台搭建、复杂系统重构、性能数量级提升（2...",
+        "source_file_name": "【全栈工程师_杭州_15-24K】陈冬华_10年.pdf",
+        "source_object_key": "resumes/resume-19900b96/bdee99ac_15-24K_10.pdf",
+        "upload_file_path": "D:\\constructing_projects\\CareerMatch\\backend\\uploads\\resumes\\resume-19900b96\\bdee99ac_15-24K_10.pdf"
+      },
+      "matching_process": {
+        "recall_size": 9,
+        "recalled_count": 9,
+        "filtered_out": 0,
+        "matched_count": 9,
+        "returned_count": 3,
+        "duration_ms": 139.68,
+        "public_result_ids": [
+          "b1094c23-02fc-4d7a-a99a-df8762eae8de",
+          "22934d42-4125-4be6-86ec-cc08e51e6946",
+          "42105623-2b15-4207-bfc6-630c7c21d5e7"
+        ],
+        "traced_result_ids": [
+          "b1094c23-02fc-4d7a-a99a-df8762eae8de",
+          "22934d42-4125-4be6-86ec-cc08e51e6946",
+          "42105623-2b15-4207-bfc6-630c7c21d5e7"
+        ],
+        "public_consistent": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "job_id": "b1094c23-02fc-4d7a-a99a-df8762eae8de",
+            "job_title": "软件开发工程师",
+            "company": "三一重能",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6363,
+            "breakdown": {
+              "vector_similarity": 0.6363,
+              "skill_match": 0.6533,
+              "experience_match": 0.67,
+              "education_match": 0.65,
+              "salary_match": 0.2143,
+              "total": 0.6099
+            },
+            "matched_skills": [
+              "Java",
+              "微服务",
+              "Spring Boot",
+              "MySQL",
+              "Redis"
+            ],
+            "missing_skills": [
+              "分布式",
+              "Spring",
+              "SQL"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched Java / 微服务 / Spring Boot; still missing 分布式 / Spring."
+          },
+          {
+            "rank": 2,
+            "job_id": "2bdd7cd8-0ac8-442f-bafc-ed75df39db73",
+            "job_title": "Java 后端开发",
+            "company": "科锐国际",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6327,
+            "breakdown": {
+              "vector_similarity": 0.6327,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.675,
+              "salary_match": 0.0,
+              "total": 0.2676
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 3,
+            "job_id": "80f55199-7e56-4241-ae49-2ef5d48e99af",
+            "job_title": "Java 后端开发",
+            "company": "科锐国际",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6327,
+            "breakdown": {
+              "vector_similarity": 0.6327,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.675,
+              "salary_match": 0.0,
+              "total": 0.2676
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 4,
+            "job_id": "22934d42-4125-4be6-86ec-cc08e51e6946",
+            "job_title": "2026届秋招-Java后台开发工程师（测开方向）",
+            "company": "广东小天才科技有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6229,
+            "breakdown": {
+              "vector_similarity": 0.6229,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.4396
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 5,
+            "job_id": "9a28302e-6b24-4b2d-b4e0-b78def008694",
+            "job_title": "Java",
+            "company": "华为云",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6217,
+            "breakdown": {
+              "vector_similarity": 0.6217,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.65,
+              "salary_match": 0.2632,
+              "total": 0.2892
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 6,
+            "job_id": "42105623-2b15-4207-bfc6-630c7c21d5e7",
+            "job_title": "Java后端开发工程师",
+            "company": "华为云",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6175,
+            "breakdown": {
+              "vector_similarity": 0.6175,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.4385
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 7,
+            "job_id": "cb77c6fe-70f0-4627-b609-1451d381274e",
+            "job_title": "JAVA开发工程师",
+            "company": "石家庄交舶科技有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6142,
+            "breakdown": {
+              "vector_similarity": 0.6142,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.2614
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 8,
+            "job_id": "4ccc8c3b-91e0-464a-b731-23df19a2db95",
+            "job_title": "Java开发工程师",
+            "company": "华为软件技术有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6079,
+            "breakdown": {
+              "vector_similarity": 0.6079,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.65,
+              "salary_match": 0.25,
+              "total": 0.2851
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 9,
+            "job_id": "1bfd538c-753c-4064-91a7-0a01aa6ac3ee",
+            "job_title": "研发工程师",
+            "company": "万泽时代科技有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6049,
+            "breakdown": {
+              "vector_similarity": 0.6049,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.2595
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          }
+        ],
+        "top_results": [
+          {
+            "rank": 1,
+            "job_id": "b1094c23-02fc-4d7a-a99a-df8762eae8de",
+            "job_title": "软件开发工程师",
+            "company": "三一重能",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6363,
+            "breakdown": {
+              "vector_similarity": 0.6363,
+              "skill_match": 0.6533,
+              "experience_match": 0.67,
+              "education_match": 0.65,
+              "salary_match": 0.2143,
+              "total": 0.6099
+            },
+            "matched_skills": [
+              "Java",
+              "微服务",
+              "Spring Boot",
+              "MySQL",
+              "Redis"
+            ],
+            "missing_skills": [
+              "分布式",
+              "Spring",
+              "SQL"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched Java / 微服务 / Spring Boot; still missing 分布式 / Spring."
+          },
+          {
+            "rank": 4,
+            "job_id": "22934d42-4125-4be6-86ec-cc08e51e6946",
+            "job_title": "2026届秋招-Java后台开发工程师（测开方向）",
+            "company": "广东小天才科技有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6229,
+            "breakdown": {
+              "vector_similarity": 0.6229,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.4396
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 6,
+            "job_id": "42105623-2b15-4207-bfc6-630c7c21d5e7",
+            "job_title": "Java后端开发工程师",
+            "company": "华为云",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6175,
+            "breakdown": {
+              "vector_similarity": 0.6175,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.4385
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          }
+        ]
+      }
+    },
+    {
+      "resume_id": "upload-smoke-7bd2c1c5",
+      "resume_source": "persisted",
+      "resume_snapshot": {
+        "resume_id": "upload-smoke-7bd2c1c5",
+        "name": "张晨",
+        "current_title": "AI 应用工程师",
+        "current_company": null,
+        "work_years": 5,
+        "first_degree": null,
+        "expected_salary": {
+          "min": 25000,
+          "max": 35000,
+          "currency": "CNY"
+        },
+        "skill_count": 11,
+        "project_count": 2,
+        "work_experience_count": 2,
+        "skills_sample": [
+          "Python",
+          "Flask",
+          "FastAPI",
+          "PostgreSQL",
+          "Redis",
+          "Docker",
+          "LLM",
+          "Embedding"
+        ],
+        "project_keywords_sample": [
+          "CareerMatch 智能招聘匹配系统",
+          "语义搜索与推荐平台",
+          "简历解析",
+          "岗位匹配",
+          "语义检索",
+          "推荐系统",
+          "招聘"
+        ],
+        "summary_excerpt": "张晨 目标岗位：AI 应用工程师 / 后端工程师 工作年限：5年 当前城市：上海 个人简介 5 年 Python 后端与 AI 应用开发经验，熟悉 Flask、FastAPI、PostgreSQL、Docker、Redis、LLM、Embedding、Prompt Design。 做过简历解析、岗位匹配、语义检索...",
+        "source_file_name": "sample_resume.txt",
+        "source_object_key": "resumes/upload-smoke-7bd2c1c5/caee4637_sample_resume.txt",
+        "upload_file_path": "D:\\constructing_projects\\CareerMatch\\backend\\uploads\\resumes\\upload-smoke-7bd2c1c5\\caee4637_sample_resume.txt"
+      },
+      "matching_process": {
+        "recall_size": 9,
+        "recalled_count": 9,
+        "filtered_out": 0,
+        "matched_count": 9,
+        "returned_count": 3,
+        "duration_ms": 141.88,
+        "public_result_ids": [
+          "d5ac908a-7e99-4995-aa81-d5e0ab2a3a5c",
+          "52305b39-7c9c-44a6-bbbc-3e9c646a9340",
+          "fbb03110-b62e-41e6-915d-b60d0145cb40"
+        ],
+        "traced_result_ids": [
+          "d5ac908a-7e99-4995-aa81-d5e0ab2a3a5c",
+          "52305b39-7c9c-44a6-bbbc-3e9c646a9340",
+          "fbb03110-b62e-41e6-915d-b60d0145cb40"
+        ],
+        "public_consistent": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "job_id": "52305b39-7c9c-44a6-bbbc-3e9c646a9340",
+            "job_title": "AI应用开发工程师",
+            "company": "广东叶子科技发展有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.7238,
+            "breakdown": {
+              "vector_similarity": 0.7238,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.675,
+              "salary_match": 0.0,
+              "total": 0.4623
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 2,
+            "job_id": "9a28302e-6b24-4b2d-b4e0-b78def008694",
+            "job_title": "Java",
+            "company": "华为云",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6795,
+            "breakdown": {
+              "vector_similarity": 0.6795,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.65,
+              "salary_match": 0.2632,
+              "total": 0.3008
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 3,
+            "job_id": "43852f7a-dfe9-4767-8f4f-6d82c4139e92",
+            "job_title": "研发工程师",
+            "company": "华为云计算技术有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6603,
+            "breakdown": {
+              "vector_similarity": 0.6603,
+              "skill_match": 0.0,
+              "experience_match": 0.25,
+              "education_match": 0.65,
+              "salary_match": 0.2632,
+              "total": 0.2859
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 4,
+            "job_id": "e55300fb-f922-4843-b83f-e34d34204edf",
+            "job_title": "后端开发工程师/AI软件开发工程师/AI Infra工程师",
+            "company": "华为云",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.654,
+            "breakdown": {
+              "vector_similarity": 0.654,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.65,
+              "salary_match": 0.3846,
+              "total": 0.3078
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 5,
+            "job_id": "5ae4fc25-2f0a-4060-aff3-a67bc7c44e47",
+            "job_title": "AI软件工程师",
+            "company": "华为HUAWEI",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6535,
+            "breakdown": {
+              "vector_similarity": 0.6535,
+              "skill_match": 0.0,
+              "experience_match": 0.25,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.2582
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 6,
+            "job_id": "fbb03110-b62e-41e6-915d-b60d0145cb40",
+            "job_title": "Agent工程师",
+            "company": "北京畅游天下网络技术集团有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6484,
+            "breakdown": {
+              "vector_similarity": 0.6484,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.4447
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 7,
+            "job_id": "dd481a50-6b6b-4969-8c1c-c559a2dcee7a",
+            "job_title": "python开发工程师",
+            "company": "华为软件技术有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6482,
+            "breakdown": {
+              "vector_similarity": 0.6482,
+              "skill_match": 0.0,
+              "experience_match": 0.565,
+              "education_match": 0.65,
+              "salary_match": 0.25,
+              "total": 0.3609
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 8,
+            "job_id": "d5ac908a-7e99-4995-aa81-d5e0ab2a3a5c",
+            "job_title": "前端工程师研发",
+            "company": "百度",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6255,
+            "breakdown": {
+              "vector_similarity": 0.6255,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.675,
+              "salary_match": 0.3333,
+              "total": 0.4759
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 9,
+            "job_id": "0ef0f941-eb48-4676-8bb1-cb01f2744e62",
+            "job_title": "Python开发工程师",
+            "company": "北京外企德科人力资源服务上海有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6162,
+            "breakdown": {
+              "vector_similarity": 0.6162,
+              "skill_match": 0.0,
+              "experience_match": 0.2941,
+              "education_match": 0.65,
+              "salary_match": 0.25,
+              "total": 0.2868
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "overall structured fit is reasonable; matched core skills; still missing Skill Pending."
+          }
+        ],
+        "top_results": [
+          {
+            "rank": 8,
+            "job_id": "d5ac908a-7e99-4995-aa81-d5e0ab2a3a5c",
+            "job_title": "前端工程师研发",
+            "company": "百度",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6255,
+            "breakdown": {
+              "vector_similarity": 0.6255,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.675,
+              "salary_match": 0.3333,
+              "total": 0.4759
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 1,
+            "job_id": "52305b39-7c9c-44a6-bbbc-3e9c646a9340",
+            "job_title": "AI应用开发工程师",
+            "company": "广东叶子科技发展有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.7238,
+            "breakdown": {
+              "vector_similarity": 0.7238,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.675,
+              "salary_match": 0.0,
+              "total": 0.4623
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          },
+          {
+            "rank": 6,
+            "job_id": "fbb03110-b62e-41e6-915d-b60d0145cb40",
+            "job_title": "Agent工程师",
+            "company": "北京畅游天下网络技术集团有限公司",
+            "status": "matched",
+            "filter_reason": "passed",
+            "vector_similarity": 0.6484,
+            "breakdown": {
+              "vector_similarity": 0.6484,
+              "skill_match": 0.0,
+              "experience_match": 1.0,
+              "education_match": 0.65,
+              "salary_match": 0.0,
+              "total": 0.4447
+            },
+            "matched_skills": [],
+            "missing_skills": [
+              "Skill Pending"
+            ],
+            "reasoning": "experience matches well; matched core skills; still missing Skill Pending."
+          }
+        ]
+      }
+    }
+  ],
+  "skipped": []
+}

@@ -151,7 +151,10 @@ export async function getResumePreview(resumeId?: string | null): Promise<Resume
   }
 }
 
-export async function getMatchOverview(resumeId?: string | null): Promise<MatchResult[]> {
+export async function getMatchOverview(
+  resumeId?: string | null,
+  topK: number = 3,
+): Promise<MatchResult[]> {
   const normalizedResumeId = resumeId?.trim();
   if (!normalizedResumeId || !API_BASE_URL) {
     logFrontendEvent("matches.overview.skipped", {
@@ -166,7 +169,7 @@ export async function getMatchOverview(resumeId?: string | null): Promise<MatchR
       method: "POST",
       body: JSON.stringify({
         resume_id: normalizedResumeId,
-        top_k: 3,
+        top_k: topK,
       }),
     });
     return response.matches;
