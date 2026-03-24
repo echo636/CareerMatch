@@ -4,6 +4,7 @@ import hashlib
 
 from app.clients.embedding import BaseEmbeddingClient
 from app.clients.vector_store import BaseVectorStore
+from app.core.logging_utils import get_logger, get_score_logger, to_log_json
 from app.domain.models import (
     BonusExperience,
     BonusSkill,
@@ -37,6 +38,9 @@ DEGREE_RANK = {
     "doctor": 5,
 }
 
+logger = get_logger("services.matching")
+score_logger = get_score_logger()
+
 
 class MatchingService:
     def __init__(
@@ -52,8 +56,10 @@ class MatchingService:
         self.vector_store = vector_store
 
     def recommend(self, resume_id: str, top_k: int = 5) -> list[MatchResult]:
+        logger.info("matching.start resume_id=%s top_k=%s", resume_id, top_k)
         resume = self.resume_repository.get(resume_id)
         if resume is None:
+            logger.warning("matching.missing_resume resume_id=%s", resume_id)
             raise ValueError(f"Resume '{resume_id}' does not exist.")
 
         resume_vector = self._ensure_resume_vector(resume)
@@ -63,52 +69,122 @@ class MatchingService:
         candidate_skill_index = self._build_candidate_skill_index(resume)
         candidate_terms = self._build_candidate_terms(resume)
         matches: list[MatchResult] = []
+        candidate_logs: list[dict[str, object]] = []
+        filtered_out = 0
+
         for candidate in recalled:
+            candidate_score = float(candidate["score"])
             job = self.job_repository.get(str(candidate["id"]))
-            if job is None or not self._passes_filters(resume, job, candidate_skill_index):
+            if job is None:
+                candidate_logs.append(
+                    {
+                        "job_id": str(candidate["id"]),
+                        "status": "job_missing",
+                        "vector_similarity": round(candidate_score, 4),
+                    }
+                )
                 continue
+
+            passed_filters, filter_reason = self._filter_decision(resume, job, candidate_skill_index)
+            if not passed_filters:
+                filtered_out += 1
+                candidate_logs.append(
+                    {
+                        "job_id": job.id,
+                        "job_title": job.title,
+                        "status": "filtered",
+                        "filter_reason": filter_reason,
+                        "vector_similarity": round(candidate_score, 4),
+                    }
+                )
+                continue
+
             breakdown = self._build_breakdown(
                 resume,
                 job,
-                float(candidate["score"]),
+                candidate_score,
                 candidate_skill_index,
                 candidate_terms,
             )
             matched_skills = [skill for skill in job.skills if skill.lower() in candidate_skill_index]
             missing_skills = [skill for skill in job.skills if skill.lower() not in candidate_skill_index]
-            matches.append(
-                MatchResult(
-                    job=job,
-                    breakdown=breakdown,
-                    matched_skills=matched_skills,
-                    missing_skills=missing_skills,
-                    reasoning=self._build_reasoning(job, matched_skills, missing_skills, breakdown),
-                )
+            match = MatchResult(
+                job=job,
+                breakdown=breakdown,
+                matched_skills=matched_skills,
+                missing_skills=missing_skills,
+                reasoning=self._build_reasoning(job, matched_skills, missing_skills, breakdown),
+            )
+            matches.append(match)
+            candidate_logs.append(
+                {
+                    "job_id": job.id,
+                    "job_title": job.title,
+                    "status": "matched",
+                    "filter_reason": filter_reason,
+                    "vector_similarity": round(candidate_score, 4),
+                    "breakdown": {
+                        "vector_similarity": breakdown.vector_similarity,
+                        "skill_match": breakdown.skill_match,
+                        "experience_match": breakdown.experience_match,
+                        "education_match": breakdown.education_match,
+                        "salary_match": breakdown.salary_match,
+                        "total": breakdown.total,
+                    },
+                    "matched_skills": matched_skills,
+                    "missing_skills": missing_skills,
+                }
             )
 
         matches.sort(key=lambda item: item.breakdown.total, reverse=True)
-        return matches[:top_k]
+        result = matches[:top_k]
+        logger.info(
+            "matching.completed resume_id=%s recalled=%s filtered_out=%s matched=%s returned=%s top_job=%s",
+            resume_id,
+            len(recalled),
+            filtered_out,
+            len(matches),
+            len(result),
+            result[0].job.title if result else None,
+        )
+        score_logger.info(
+            to_log_json(
+                {
+                    "event": "matching.recommend",
+                    "resume_id": resume_id,
+                    "top_k": top_k,
+                    "recall_size": recall_size,
+                    "recalled_count": len(recalled),
+                    "filtered_out": filtered_out,
+                    "returned_count": len(result),
+                    "candidates": candidate_logs,
+                }
+            )
+        )
+        return result
 
-    def _passes_filters(
+    def _filter_decision(
         self,
         resume: ResumeProfile,
         job: JobProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
-    ) -> bool:
+    ) -> tuple[bool, str]:
         required_scores = self._required_skill_scores(job, candidate_skill_index)
         if required_scores and min(required_scores) < 0.6:
-            return False
+            return False, "required_skill_below_threshold"
 
         if job.experience_requirements.min_total_years and self._total_years_score(resume, job) < 0.55:
-            return False
+            return False, "experience_below_threshold"
 
         if self._minimum_degree_gate(resume, job.education_constraints) < 0.5:
-            return False
+            return False, "education_below_threshold"
 
         if not job.has_salary_reference:
-            return True
+            return True, "passed"
         salary_gap = resume.expected_salary.min - job.salary_range.max
-        return salary_gap <= 8000
+        if salary_gap > 8000:
+            return False, "salary_gap_too_large"
+        return True, "passed"
 
     def _build_breakdown(
         self,
@@ -193,9 +269,25 @@ class MatchingService:
         payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         cached = self.vector_store.get("resumes", resume.id)
         if cached is not None and cached.payload_hash == payload_hash:
+            logger.info(
+                "matching.resume_vector.cache_hit resume_id=%s payload_hash=%s",
+                resume.id,
+                payload_hash[:12],
+            )
             return cached.vector
+        logger.info(
+            "matching.resume_vector.compute resume_id=%s payload_hash=%s payload_length=%s",
+            resume.id,
+            payload_hash[:12],
+            len(payload),
+        )
         vector = self.embedding_client.embed_text(payload)
         self.vector_store.upsert("resumes", resume.id, vector, payload_hash)
+        logger.info(
+            "matching.resume_vector.saved resume_id=%s dimensions=%s",
+            resume.id,
+            len(vector),
+        )
         return vector
 
     def _build_candidate_skill_index(self, resume: ResumeProfile) -> dict[str, dict[str, float | str | None]]:

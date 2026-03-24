@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { uploadResume } from "@/lib/api";
+import { logFrontendEvent } from "@/lib/logger";
 
 export function ResumeUploadForm() {
   const router = useRouter();
@@ -17,6 +18,11 @@ export function ResumeUploadForm() {
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const nextFile = event.target.files?.[0];
     setSelectedFileName(nextFile?.name ?? "未选择文件");
+    logFrontendEvent("resume.form.file_selected", {
+      fileName: nextFile?.name ?? null,
+      fileSize: nextFile?.size ?? null,
+      fileType: nextFile?.type ?? null,
+    });
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -30,22 +36,42 @@ export function ResumeUploadForm() {
     const file = formData.get("file");
     const hasFile = file instanceof File && file.size > 0;
 
+    logFrontendEvent("resume.form.submit_clicked", {
+      hasTextContent: content.length > 0,
+      contentLength: content.length,
+      hasFile,
+      fileName: file instanceof File ? file.name : null,
+    });
+
     if (!content && !hasFile) {
-      setError("请粘贴简历文本，或上传一份 PDF、DOCX、TXT、MD 文件。");
+      const message = "请粘贴简历文本，或上传一份 PDF、DOCX、TXT、MD 文件。";
+      setError(message);
+      logFrontendEvent("resume.form.submit_blocked", { reason: "missing_content_and_file" }, "warn");
       return;
     }
 
     setIsSubmitting(true);
     setStatus("正在解析简历，请稍候...");
+    logFrontendEvent("resume.form.submit_started");
 
     try {
       const payload = await uploadResume(formData);
       setStatus("解析完成，正在跳转到匹配结果...");
+      logFrontendEvent("resume.form.submit_succeeded", {
+        resumeId: payload.resumeId,
+        sourceFileName: payload.resume.sourceFileName ?? null,
+      });
       router.push(`/matches?resumeId=${encodeURIComponent(payload.resumeId)}` as Route);
+      logFrontendEvent("resume.form.redirecting", {
+        target: "/matches",
+        resumeId: payload.resumeId,
+      });
       router.refresh();
     } catch (submitError) {
+      const message = submitError instanceof Error ? submitError.message : "上传失败，请稍后重试。";
       setStatus(null);
-      setError(submitError instanceof Error ? submitError.message : "上传失败，请稍后重试。");
+      setError(message);
+      logFrontendEvent("resume.form.submit_failed", { message }, "error");
     } finally {
       setIsSubmitting(false);
     }

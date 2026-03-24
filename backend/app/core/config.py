@@ -21,9 +21,13 @@ class Settings:
     job_seed_path: Path
     job_seed_limit: int | None
     app_state_db_path: Path
+    app_log_dir: Path
+    app_log_level: str
     dashscope_api_key: str
     dashscope_base_url: str
     dashscope_timeout_sec: int
+    dashscope_llm_retry_count: int
+    dashscope_llm_retry_backoff_sec: float
     qwen_llm_model: str
     qwen_embedding_model: str
     qwen_embedding_dimensions: int
@@ -49,6 +53,11 @@ def get_settings() -> Settings:
     if not app_state_db_path.is_absolute():
         app_state_db_path = BASE_DIR / app_state_db_path
 
+    configured_log_dir = os.getenv("APP_LOG_DIR", "logs")
+    app_log_dir = Path(configured_log_dir)
+    if not app_log_dir.is_absolute():
+        app_log_dir = BASE_DIR / app_log_dir
+
     return Settings(
         app_name=os.getenv("APP_NAME", "CareerMatch API"),
         debug=os.getenv("FLASK_DEBUG", "0") == "1",
@@ -66,12 +75,16 @@ def get_settings() -> Settings:
         job_seed_path=job_seed_path.resolve(),
         job_seed_limit=job_seed_limit,
         app_state_db_path=app_state_db_path.resolve(),
+        app_log_dir=app_log_dir.resolve(),
+        app_log_level=os.getenv("APP_LOG_LEVEL", "INFO").strip().upper() or "INFO",
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY", "").strip(),
         dashscope_base_url=os.getenv(
             "DASHSCOPE_BASE_URL",
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         ).rstrip("/"),
-        dashscope_timeout_sec=int(os.getenv("DASHSCOPE_TIMEOUT_SEC", "60")),
+        dashscope_timeout_sec=int(os.getenv("DASHSCOPE_TIMEOUT_SEC", "120")),
+        dashscope_llm_retry_count=int(os.getenv("DASHSCOPE_LLM_RETRY_COUNT", "2")),
+        dashscope_llm_retry_backoff_sec=float(os.getenv("DASHSCOPE_LLM_RETRY_BACKOFF_SEC", "2.0")),
         qwen_llm_model=os.getenv("QWEN_LLM_MODEL", "qwen-plus-latest").strip(),
         qwen_embedding_model=os.getenv("QWEN_EMBEDDING_MODEL", "text-embedding-v4").strip(),
         qwen_embedding_dimensions=int(os.getenv("QWEN_EMBEDDING_DIMENSIONS", "1024")),

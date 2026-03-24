@@ -1,14 +1,16 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
 import json
 from pathlib import Path
 import re
+import time
 from typing import Any
 import urllib.error
 import urllib.request
 
+from app.core.logging_utils import get_logger
 from app.domain.models import GapInsight
 
 
@@ -45,6 +47,8 @@ CURRENT_YEAR = datetime.now().year
 DEFAULT_QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_RESUME_SUMMARY = "Resume summary pending."
 DEFAULT_JOB_SUMMARY = "Job description pending."
+
+logger = get_logger("clients.llm")
 
 
 class BaseLLMClient(ABC):
@@ -222,13 +226,17 @@ class QwenLLMClient(BaseLLMClient):
         api_key: str,
         model: str = "qwen-plus-latest",
         base_url: str = DEFAULT_QWEN_BASE_URL,
-        timeout_sec: int = 60,
+        timeout_sec: int = 120,
+        retry_count: int = 2,
+        retry_backoff_sec: float = 2.0,
         fallback_client: BaseLLMClient | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout_sec = timeout_sec
+        self.retry_count = max(retry_count, 0)
+        self.retry_backoff_sec = max(retry_backoff_sec, 0.0)
         self.fallback_client = fallback_client or MockLLMClient()
     def extract_resume(self, raw_text: str, file_name: str, resume_id: str) -> dict[str, Any]:
         fallback = self.fallback_client.extract_resume(raw_text, file_name, resume_id)
@@ -394,31 +402,95 @@ class QwenLLMClient(BaseLLMClient):
         return payload
 
     def _post_json(self, payload: dict[str, Any]) -> dict[str, Any]:
-        request = urllib.request.Request(
-            url=f"{self.base_url}/chat/completions",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except TimeoutError as exc:
-            raise RuntimeError(
-                f"Qwen chat request timed out after {self.timeout_sec} seconds."
-            ) from exc
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Qwen chat request failed with status {exc.code}: {detail}") from exc
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, TimeoutError):
-                raise RuntimeError(
-                    f"Qwen chat request timed out after {self.timeout_sec} seconds."
-                ) from exc
-            raise RuntimeError(f"Qwen chat request failed: {exc.reason}") from exc
+        request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        max_attempts = self.retry_count + 1
+        last_error: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            request = urllib.request.Request(
+                url=f"{self.base_url}/chat/completions",
+                data=request_body,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                logger.info(
+                    "llm.qwen.request_start model=%s attempt=%s/%s timeout_sec=%s",
+                    self.model,
+                    attempt,
+                    max_attempts,
+                    self.timeout_sec,
+                )
+                with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                logger.info(
+                    "llm.qwen.request_success model=%s attempt=%s/%s",
+                    self.model,
+                    attempt,
+                    max_attempts,
+                )
+                return result
+            except TimeoutError as exc:
+                last_error = exc
+                logger.warning(
+                    "llm.qwen.timeout model=%s attempt=%s/%s timeout_sec=%s",
+                    self.model,
+                    attempt,
+                    max_attempts,
+                    self.timeout_sec,
+                )
+                if attempt >= max_attempts:
+                    raise RuntimeError(
+                        f"Qwen chat request timed out after {self.timeout_sec} seconds."
+                    ) from exc
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                last_error = exc
+                retryable = exc.code in {408, 429, 500, 502, 503, 504}
+                logger.warning(
+                    "llm.qwen.http_error model=%s attempt=%s/%s status=%s retryable=%s detail=%s",
+                    self.model,
+                    attempt,
+                    max_attempts,
+                    exc.code,
+                    retryable,
+                    detail,
+                )
+                if not retryable or attempt >= max_attempts:
+                    raise RuntimeError(f"Qwen chat request failed with status {exc.code}: {detail}") from exc
+            except urllib.error.URLError as exc:
+                last_error = exc
+                timeout_reason = isinstance(exc.reason, TimeoutError)
+                retryable = timeout_reason or isinstance(exc.reason, ConnectionResetError) or isinstance(exc.reason, OSError)
+                logger.warning(
+                    "llm.qwen.url_error model=%s attempt=%s/%s retryable=%s reason=%s",
+                    self.model,
+                    attempt,
+                    max_attempts,
+                    retryable,
+                    exc.reason,
+                )
+                if not retryable or attempt >= max_attempts:
+                    if timeout_reason:
+                        raise RuntimeError(
+                            f"Qwen chat request timed out after {self.timeout_sec} seconds."
+                        ) from exc
+                    raise RuntimeError(f"Qwen chat request failed: {exc.reason}") from exc
+
+            sleep_sec = self.retry_backoff_sec * attempt
+            if sleep_sec > 0:
+                logger.info(
+                    "llm.qwen.retry_sleep model=%s next_attempt=%s sleep_sec=%.1f",
+                    self.model,
+                    attempt + 1,
+                    sleep_sec,
+                )
+                time.sleep(sleep_sec)
+
+        raise RuntimeError("Qwen chat request failed after retries.") from last_error
     def _message_content_to_text(self, content: Any) -> str:
         if isinstance(content, str):
             return content.strip()

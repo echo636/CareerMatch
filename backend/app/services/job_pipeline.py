@@ -6,6 +6,7 @@ from typing import Any
 from app.clients.embedding import BaseEmbeddingClient
 from app.clients.llm import BaseLLMClient
 from app.clients.vector_store import BaseVectorStore
+from app.core.logging_utils import get_logger
 from app.domain.models import (
     BonusExperience,
     BonusSkill,
@@ -22,6 +23,8 @@ from app.domain.models import (
     RequiredSkill,
 )
 
+logger = get_logger("services.job_pipeline")
+
 
 class JobPipelineService:
     def __init__(
@@ -37,17 +40,22 @@ class JobPipelineService:
         self.vector_store = vector_store
 
     def import_jobs(self, records: list[dict[str, Any]]) -> list[JobProfile]:
+        logger.info("job_pipeline.import.start records=%s", len(records))
         normalized_jobs = [self._normalize(record) for record in records]
         for job in normalized_jobs:
             self._ensure_vector("jobs", job.id, self._vector_payload(job))
-        return self.repository.save_many(normalized_jobs)
+        saved_jobs = self.repository.save_many(normalized_jobs)
+        logger.info("job_pipeline.import.completed records=%s saved=%s", len(records), len(saved_jobs))
+        return saved_jobs
 
     def list_jobs(self) -> list[JobProfile]:
-        return self.repository.list()
+        jobs = self.repository.list()
+        logger.info("job_pipeline.list count=%s", len(jobs))
+        return jobs
 
     def _normalize(self, record: dict[str, Any]) -> JobProfile:
         extracted = self.llm_client.extract_job(record)
-        return JobProfile(
+        job = JobProfile(
             id=extracted["id"],
             company=extracted["company"],
             basic_info=self._build_basic_info(extracted.get("basic_info") or {}),
@@ -60,6 +68,14 @@ class JobPipelineService:
             ),
             tags=[self._build_tag(item) for item in extracted.get("tags") or []],
         )
+        logger.info(
+            "job_pipeline.normalize job_id=%s title=%s required_skills=%s bonus_skills=%s",
+            job.id,
+            job.basic_info.title,
+            len(job.skill_requirements.required),
+            len(job.skill_requirements.bonus),
+        )
+        return job
 
     def _vector_payload(self, job: JobProfile) -> str:
         return " ".join([job.summary, *job.skills, *job.project_keywords])
@@ -68,9 +84,28 @@ class JobPipelineService:
         payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         cached = self.vector_store.get(namespace, item_id)
         if cached is not None and cached.payload_hash == payload_hash:
+            logger.debug(
+                "job_pipeline.vector.cache_hit namespace=%s item_id=%s payload_hash=%s",
+                namespace,
+                item_id,
+                payload_hash[:12],
+            )
             return cached.vector
+        logger.info(
+            "job_pipeline.vector.compute namespace=%s item_id=%s payload_hash=%s payload_length=%s",
+            namespace,
+            item_id,
+            payload_hash[:12],
+            len(payload),
+        )
         vector = self.embedding_client.embed_text(payload)
         self.vector_store.upsert(namespace, item_id, vector, payload_hash)
+        logger.info(
+            "job_pipeline.vector.saved namespace=%s item_id=%s dimensions=%s",
+            namespace,
+            item_id,
+            len(vector),
+        )
         return vector
 
     def _build_basic_info(self, payload: dict[str, Any]) -> JobBasicInfo:

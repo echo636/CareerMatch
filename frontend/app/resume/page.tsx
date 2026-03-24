@@ -1,5 +1,6 @@
-﻿import { ResumeUploadForm } from "@/components/resume/resume-upload-form";
+﻿import { PageEventLogger } from "@/components/logging/page-event-logger";
 import { AppShell } from "@/components/layout/app-shell";
+import { ResumeUploadForm } from "@/components/resume/resume-upload-form";
 import { SectionCard } from "@/components/sections/section-card";
 import { StepTimeline } from "@/components/sections/step-timeline";
 
@@ -13,6 +14,7 @@ const resumeSteps = [
 export default function ResumePage() {
   return (
     <AppShell activePath="/resume">
+      <PageEventLogger event="page.resume.view" payload={{ route: "/resume" }} />
       <SectionCard title="上传简历" description="提交真实简历后，系统会返回新的 resumeId，并自动进入匹配流程。">
         <ResumeUploadForm />
       </SectionCard>

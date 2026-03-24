@@ -7,6 +7,7 @@ from app.clients.embedding import BaseEmbeddingClient
 from app.clients.llm import BaseLLMClient
 from app.clients.object_storage import LocalObjectStorageClient
 from app.clients.vector_store import BaseVectorStore
+from app.core.logging_utils import get_logger
 from app.domain.models import (
     ResumeBasicInfo,
     ResumeEducation,
@@ -17,6 +18,8 @@ from app.domain.models import (
     ResumeWorkExperience,
     SalaryRange,
 )
+
+logger = get_logger("services.resume_pipeline")
 
 
 class ResumePipelineService:
@@ -44,6 +47,13 @@ class ResumePipelineService:
         source_content_type: str = "",
         source_object_key: str = "",
     ) -> ResumeProfile:
+        logger.info(
+            "resume_pipeline.process.start resume_id=%s file_name=%s raw_text_length=%s source_content_type=%s",
+            resume_id,
+            file_name,
+            len(raw_text),
+            source_content_type,
+        )
         extracted = self.llm_client.extract_resume(raw_text, file_name, resume_id)
         expected_salary = extracted.get("expected_salary") or {}
         resume = ResumeProfile(
@@ -68,7 +78,15 @@ class ResumePipelineService:
             source_object_key=source_object_key,
         )
         self._ensure_vector("resumes", resume.id, self._vector_payload(resume))
-        return self.repository.save(resume)
+        saved_resume = self.repository.save(resume)
+        logger.info(
+            "resume_pipeline.process.completed resume_id=%s skills=%s projects=%s work_experiences=%s",
+            saved_resume.id,
+            len(saved_resume.skills),
+            len(saved_resume.projects),
+            len(saved_resume.work_experiences),
+        )
+        return saved_resume
 
     def process_uploaded_resume(
         self,
@@ -79,12 +97,26 @@ class ResumePipelineService:
         resume_id: str,
         raw_text: str = "",
     ) -> ResumeProfile:
+        logger.info(
+            "resume_pipeline.process_uploaded.start resume_id=%s file_name=%s content_type=%s bytes=%s raw_text_override=%s",
+            resume_id,
+            file_name,
+            content_type,
+            len(file_bytes),
+            bool(raw_text.strip()),
+        )
         normalized_text = raw_text.strip() or self.document_parser.extract_text(
             file_bytes=file_bytes,
             file_name=file_name,
             content_type=content_type,
         )
         object_key = self.object_storage.save_resume(resume_id, file_name, file_bytes)
+        logger.info(
+            "resume_pipeline.process_uploaded.persisted resume_id=%s object_key=%s normalized_text_length=%s",
+            resume_id,
+            object_key,
+            len(normalized_text),
+        )
         return self.process_resume(
             file_name=file_name,
             raw_text=normalized_text,
@@ -94,7 +126,9 @@ class ResumePipelineService:
         )
 
     def get_resume(self, resume_id: str) -> ResumeProfile | None:
-        return self.repository.get(resume_id)
+        resume = self.repository.get(resume_id)
+        logger.info("resume_pipeline.get resume_id=%s found=%s", resume_id, resume is not None)
+        return resume
 
     def _vector_payload(self, resume: ResumeProfile) -> str:
         return " ".join([resume.summary, *resume.skill_names, *resume.project_keywords])
@@ -103,9 +137,28 @@ class ResumePipelineService:
         payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         cached = self.vector_store.get(namespace, item_id)
         if cached is not None and cached.payload_hash == payload_hash:
+            logger.info(
+                "resume_pipeline.vector.cache_hit namespace=%s item_id=%s payload_hash=%s",
+                namespace,
+                item_id,
+                payload_hash[:12],
+            )
             return cached.vector
+        logger.info(
+            "resume_pipeline.vector.compute namespace=%s item_id=%s payload_hash=%s payload_length=%s",
+            namespace,
+            item_id,
+            payload_hash[:12],
+            len(payload),
+        )
         vector = self.embedding_client.embed_text(payload)
         self.vector_store.upsert(namespace, item_id, vector, payload_hash)
+        logger.info(
+            "resume_pipeline.vector.saved namespace=%s item_id=%s dimensions=%s",
+            namespace,
+            item_id,
+            len(vector),
+        )
         return vector
 
     def _build_basic_info(self, payload: dict, file_name: str) -> ResumeBasicInfo:

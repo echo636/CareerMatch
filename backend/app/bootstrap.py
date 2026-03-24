@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 import sqlite3
@@ -93,6 +93,8 @@ def _build_llm_client(settings: Settings, fallback_client: BaseLLMClient) -> Bas
             model=settings.qwen_llm_model,
             base_url=settings.dashscope_base_url,
             timeout_sec=settings.dashscope_timeout_sec,
+            retry_count=settings.dashscope_llm_retry_count,
+            retry_backoff_sec=settings.dashscope_llm_retry_backoff_sec,
             fallback_client=fallback_client,
         )
     raise ValueError(f"Unsupported LLM_PROVIDER '{settings.llm_provider}'.")

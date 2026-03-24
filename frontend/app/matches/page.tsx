@@ -1,5 +1,6 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 
+import { PageEventLogger } from "@/components/logging/page-event-logger";
 import { AppShell } from "@/components/layout/app-shell";
 import { ScorePill } from "@/components/sections/score-pill";
 import { SectionCard } from "@/components/sections/section-card";
@@ -41,6 +42,17 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
 
   return (
     <AppShell activePath="/matches">
+      <PageEventLogger
+        event="page.matches.view"
+        payload={{
+          route: "/matches",
+          resumeId: resumeId ?? null,
+          resumeFound: Boolean(resume),
+          matchesCount: matches.length,
+          insightCount: report.insights.length,
+          baselineRoleCount: report.baselineRoles.length,
+        }}
+      />
       <SectionCard title="简历概览" description="展示当前简历的核心信息。">
         {resume ? (
           <div className="resume-overview">
