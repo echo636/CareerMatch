@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import sqlite3
 import warnings
 
 from app.clients.document_parser import ResumeDocumentParser
-from app.clients.embedding import BaseEmbeddingClient, QwenEmbeddingClient, SimpleEmbeddingClient
-from app.clients.llm import BaseLLMClient, MockLLMClient, QwenLLMClient
+from app.clients.embedding import BaseEmbeddingClient, QwenEmbeddingClient
+from app.clients.llm import BaseLLMClient, QwenLLMClient
 from app.clients.object_storage import LocalObjectStorageClient
 from app.clients.vector_store import BaseVectorStore, SqliteVectorStore
 from app.core.config import Settings
@@ -17,7 +17,7 @@ from app.services.job_pipeline import JobPipelineService
 from app.services.matching import MatchingService
 from app.services.resume_pipeline import ResumePipelineService
 
-REMOTE_EMBEDDING_STARTUP_JOB_LIMIT = 20
+REMOTE_STARTUP_JOB_LIMIT = 20
 
 
 @dataclass(slots=True)
@@ -30,8 +30,7 @@ class ServiceContainer:
 
 
 def build_services(settings: Settings) -> ServiceContainer:
-    mock_llm_client = MockLLMClient()
-    llm_client = _build_llm_client(settings, mock_llm_client)
+    llm_client = _build_llm_client(settings)
     embedding_client = _build_embedding_client(settings)
     vector_store = SqliteVectorStore(settings.app_state_db_path)
     document_parser = ResumeDocumentParser()
@@ -42,7 +41,7 @@ def build_services(settings: Settings) -> ServiceContainer:
     initialize_persistent_data(
         settings=settings,
         job_repository=job_repository,
-        llm_client=mock_llm_client,
+        llm_client=llm_client,
         embedding_client=embedding_client,
         vector_store=vector_store,
     )
@@ -82,53 +81,50 @@ def build_services(settings: Settings) -> ServiceContainer:
     )
 
 
-def _build_llm_client(settings: Settings, fallback_client: BaseLLMClient) -> BaseLLMClient:
-    if settings.llm_provider == "mock":
-        return fallback_client
-    if settings.llm_provider == "qwen":
-        if not settings.dashscope_api_key:
-            raise ValueError("DASHSCOPE_API_KEY is required when LLM_PROVIDER=qwen.")
-        return QwenLLMClient(
-            api_key=settings.dashscope_api_key,
-            model=settings.qwen_llm_model,
-            base_url=settings.dashscope_base_url,
-            timeout_sec=settings.dashscope_timeout_sec,
-            retry_count=settings.dashscope_llm_retry_count,
-            retry_backoff_sec=settings.dashscope_llm_retry_backoff_sec,
-            fallback_client=fallback_client,
+def _build_llm_client(settings: Settings) -> BaseLLMClient:
+    if settings.llm_provider != "qwen":
+        raise ValueError(
+            f"Unsupported LLM_PROVIDER '{settings.llm_provider}'. Mock provider has been removed; use 'qwen'."
         )
-    raise ValueError(f"Unsupported LLM_PROVIDER '{settings.llm_provider}'.")
+    if not settings.dashscope_api_key:
+        raise ValueError("DASHSCOPE_API_KEY is required when LLM_PROVIDER=qwen.")
+    return QwenLLMClient(
+        api_key=settings.dashscope_api_key,
+        model=settings.qwen_llm_model,
+        base_url=settings.dashscope_base_url,
+        timeout_sec=settings.dashscope_timeout_sec,
+        retry_count=settings.dashscope_llm_retry_count,
+        retry_backoff_sec=settings.dashscope_llm_retry_backoff_sec,
+    )
 
 
 def _build_embedding_client(settings: Settings) -> BaseEmbeddingClient:
-    if settings.embedding_provider == "mock":
-        return SimpleEmbeddingClient()
-    if settings.embedding_provider == "qwen":
-        if not settings.dashscope_api_key:
-            raise ValueError("DASHSCOPE_API_KEY is required when EMBEDDING_PROVIDER=qwen.")
-        return QwenEmbeddingClient(
-            api_key=settings.dashscope_api_key,
-            model=settings.qwen_embedding_model,
-            base_url=settings.dashscope_base_url,
-            dimensions=settings.qwen_embedding_dimensions,
-            timeout_sec=settings.dashscope_timeout_sec,
+    if settings.embedding_provider != "qwen":
+        raise ValueError(
+            f"Unsupported EMBEDDING_PROVIDER '{settings.embedding_provider}'. Mock provider has been removed; use 'qwen'."
         )
-    raise ValueError(f"Unsupported EMBEDDING_PROVIDER '{settings.embedding_provider}'.")
+    if not settings.dashscope_api_key:
+        raise ValueError("DASHSCOPE_API_KEY is required when EMBEDDING_PROVIDER=qwen.")
+    return QwenEmbeddingClient(
+        api_key=settings.dashscope_api_key,
+        model=settings.qwen_embedding_model,
+        base_url=settings.dashscope_base_url,
+        dimensions=settings.qwen_embedding_dimensions,
+        timeout_sec=settings.dashscope_timeout_sec,
+    )
 
 
 def _seed_job_limit(settings: Settings) -> int | None:
     if settings.job_seed_limit is not None:
         return settings.job_seed_limit
-    if settings.embedding_provider == "qwen":
-        warnings.warn(
-            "EMBEDDING_PROVIDER=qwen without JOB_DATA_LIMIT would request remote embeddings for every seeded job. "
-            f"Capping startup seed load to {REMOTE_EMBEDDING_STARTUP_JOB_LIMIT} jobs. "
-            "Set JOB_DATA_LIMIT explicitly to override.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        return REMOTE_EMBEDDING_STARTUP_JOB_LIMIT
-    return None
+    warnings.warn(
+        "Real Qwen LLM and embedding are enabled for startup seed jobs. "
+        f"Capping startup seed load to {REMOTE_STARTUP_JOB_LIMIT} jobs. "
+        "Set JOB_DATA_LIMIT explicitly to override.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return REMOTE_STARTUP_JOB_LIMIT
 
 
 def _remove_legacy_demo_resume(settings: Settings) -> None:

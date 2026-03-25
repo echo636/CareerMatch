@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -23,13 +23,14 @@ except ImportError:  # pragma: no cover - optional in bare environments
 from app.bootstrap import build_services
 from app.core.config import get_settings
 from app.core.logging_utils import configure_logging
+from report_manager import resolve_report_paths, write_report_files
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Test matching flow for uploaded resumes. The script scans backend/uploads/resumes, "
-            "reuses persisted resumes from SQLite when possible, and writes a timestamped report to backend/test."
+            "reuses persisted resumes from SQLite when possible, and writes managed reports under backend/test/reports/resume_matching by default."
         )
     )
     parser.add_argument(
@@ -63,7 +64,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=str,
         default="",
-        help="Optional custom markdown report filename. Relative paths are resolved under backend/test.",
+        help="Optional custom markdown report filename. Relative paths are resolved under backend/test; default output goes to backend/test/reports/resume_matching/.",
     )
     return parser.parse_args()
 
@@ -434,21 +435,6 @@ def render_report(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def resolve_output_paths(output_arg: str, started_at: datetime) -> tuple[Path, Path]:
-    if output_arg:
-        markdown_path = Path(output_arg)
-        if not markdown_path.is_absolute():
-            markdown_path = TEST_DIR / markdown_path
-    else:
-        stamp = started_at.strftime("%Y%m%d_%H%M%S")
-        markdown_path = TEST_DIR / f"matching_report_{stamp}.md"
-
-    if markdown_path.suffix.lower() != ".md":
-        markdown_path = markdown_path.with_suffix(".md")
-    json_path = markdown_path.with_suffix(".json")
-    return markdown_path, json_path
-
-
 def main() -> int:
     args = parse_args()
     if args.top_k <= 0:
@@ -465,7 +451,12 @@ def main() -> int:
     upload_root = settings.object_storage_root / "resumes"
     selected_resume_ids = select_resume_ids(upload_root, args.resume_ids, args.limit)
     started_at = now_local()
-    markdown_path, json_path = resolve_output_paths(args.output, started_at)
+    report_paths = resolve_report_paths(
+        category="resume_matching",
+        output_arg=args.output,
+        started_at=started_at,
+        default_stem="matching_report",
+    )
 
     report: dict[str, Any] = {
         "run_at": started_at.isoformat(timespec="seconds"),
@@ -505,13 +496,13 @@ def main() -> int:
         )
 
     report_text = render_report(report)
-    markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    markdown_path.write_text(report_text, encoding="utf-8")
-    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_report_files(report_paths, report_text, report)
 
     print(report_text)
-    print(f"[report] markdown={markdown_path}")
-    print(f"[report] json={json_path}")
+    print(f"[report] markdown={report_paths.markdown_path}")
+    print(f"[report] json={report_paths.json_path}")
+    print(f"[report] latest_markdown={report_paths.latest_markdown_path}")
+    print(f"[report] latest_json={report_paths.latest_json_path}")
 
     return 0 if report["processed"] else 1
 

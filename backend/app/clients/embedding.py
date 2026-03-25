@@ -1,7 +1,6 @@
 ﻿from __future__ import annotations
 
 from abc import ABC, abstractmethod
-import hashlib
 import json
 import urllib.error
 import urllib.request
@@ -15,18 +14,6 @@ class BaseEmbeddingClient(ABC):
     @abstractmethod
     def embed_text(self, text: str, dimensions: int | None = None) -> list[float]:
         raise NotImplementedError
-
-
-class SimpleEmbeddingClient(BaseEmbeddingClient):
-    def embed_text(self, text: str, dimensions: int | None = 16) -> list[float]:
-        size = dimensions or 16
-        payload = hashlib.sha256(text.encode("utf-8")).digest()
-        values = []
-        for index in range(size):
-            source = payload[index % len(payload)]
-            values.append(round(source / 255, 6))
-        logger.debug("embedding.simple.generated dimensions=%s text_length=%s", size, len(text))
-        return values
 
 
 class QwenEmbeddingClient(BaseEmbeddingClient):

@@ -12,9 +12,9 @@ def health_check():
             "app": services.settings.app_name,
             "ai": {
                 "llmProvider": services.settings.llm_provider,
-                "llmModel": services.settings.qwen_llm_model if services.settings.llm_provider == "qwen" else "mock",
+                "llmModel": services.settings.qwen_llm_model,
                 "embeddingProvider": services.settings.embedding_provider,
-                "embeddingModel": services.settings.qwen_embedding_model if services.settings.embedding_provider == "qwen" else "simple-hash",
+                "embeddingModel": services.settings.qwen_embedding_model,
             },
             "dependencies": {
                 "postgres": "planned",

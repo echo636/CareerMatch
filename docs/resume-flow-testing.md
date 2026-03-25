@@ -1,13 +1,13 @@
 ﻿# Resume Flow Testing
 
-This document explains how to use the real-LLM smoke test script for the resume upload flow, what outputs to inspect, and which parts of the backend logic each mode validates.
+This document explains how to use the real-Qwen smoke test script for the resume upload flow, what outputs to inspect, and which backend stages each mode validates.
 
 ## Purpose
 
-The script is intended for two kinds of checks:
+The script is intended for two checks:
 
-- Verify whether DashScope / Qwen can be called successfully with the current environment.
-- Verify whether the full resume upload pipeline works end to end after a user uploads a resume.
+- Verify that DashScope / Qwen can be called successfully with the current environment.
+- Verify that the full resume upload pipeline works end to end after a user uploads a resume.
 
 The script file is:
 
@@ -31,18 +31,18 @@ Before running the script, make sure:
 
 1. `backend/.env` contains a valid `DASHSCOPE_API_KEY`.
 2. `LLM_PROVIDER=qwen`.
-3. The backend process is already running if you want to use `upload` or `both`.
-4. `NEXT_PUBLIC_API_BASE_URL` is not required for this script because it talks to the backend directly.
+3. `EMBEDDING_PROVIDER=qwen`.
+4. The backend process is already running if you want to use `upload` or `both`.
+5. `NEXT_PUBLIC_API_BASE_URL` is not required for this script because it talks to the backend directly.
 
-Recommended first-stage configuration:
+Recommended configuration:
 
 ```env
 LLM_PROVIDER=qwen
-EMBEDDING_PROVIDER=mock
+EMBEDDING_PROVIDER=qwen
 QWEN_LLM_MODEL=qwen-plus-latest
+QWEN_EMBEDDING_MODEL=text-embedding-v4
 ```
-
-This keeps real resume extraction and gap insight generation enabled while avoiding embedding cost during early validation.
 
 ## Commands
 
@@ -96,25 +96,26 @@ The script prints JSON blocks with titles like:
 
 ### 1. `health`
 
-Example fields to inspect:
+Check:
 
 - `ai.llmProvider`
 - `ai.llmModel`
 - `ai.embeddingProvider`
+- `ai.embeddingModel`
 
-What should look correct:
+Expected:
 
-- `llmProvider` should be `qwen` if you are validating the real LLM path.
-- `embeddingProvider` should match your current rollout plan, commonly `mock` in phase one.
+- `llmProvider = qwen`
+- `embeddingProvider = qwen`
 
-What this validates:
+This validates:
 
 - The backend loaded the expected `.env` configuration.
 - The running backend instance is the one you think you are testing.
 
 ### 2. `direct-llm`
 
-Example fields to inspect:
+Check:
 
 - `resumeId`
 - `name`
@@ -123,103 +124,93 @@ Example fields to inspect:
 - `projectCount`
 - `summary`
 
-What should look correct:
+Expected:
 
-- The request should return successfully without timeout or permission errors.
-- `name` should match the resume text.
-- `currentTitle` should be reasonable for the resume content.
-- `skillCount` and `projectCount` should be greater than `0` for a normal technical resume.
-- `summary` should reflect the uploaded content, not an unrelated template.
+- The request returns successfully without timeout or permission errors.
+- `name` matches the resume text.
+- `currentTitle` is reasonable for the resume content.
+- `skillCount` and `projectCount` are greater than `0` for a normal technical resume.
+- `summary` reflects the uploaded content, not an unrelated template.
 
-What this validates:
+This validates:
 
 - DashScope connectivity works from the current environment.
 - `QwenLLMClient` request formatting is valid.
 - JSON-mode response parsing works.
-- Resume normalization still produces the expected field shape after model output is merged.
-
-What this does not validate:
-
-- File upload handling.
-- Document parsing.
-- Resume persistence.
-- Matching and gap analysis APIs.
+- Resume normalization still produces the expected field shape.
 
 ### 3. `upload`
 
-Example fields to inspect:
+Check:
 
 - `resumeId`
 - `name`
 - `skillCount`
 - `projectCount`
 
-What should look correct:
+Expected:
 
-- The API should return `resumeId`.
-- `name` should be populated.
-- `skillCount` and `projectCount` should be non-zero for a valid resume.
+- The API returns `resumeId`.
+- `name` is populated.
+- `skillCount` and `projectCount` are non-zero for a valid resume.
 
-What this validates:
+This validates:
 
 - Multipart form upload works.
 - `POST /api/resumes/upload` works.
-- Resume text extraction path works for the provided file.
-- The backend actually invokes the configured LLM extraction path.
+- Resume text extraction works for the provided file.
+- The backend invokes the real Qwen extraction path.
 - The structured resume is serialized correctly and returned to the client.
 
 ### 4. `matches`
 
-Example fields to inspect:
+Check:
 
 - `count`
 - `topJob`
 
-What should look correct:
+Expected:
 
-- `count` should usually be greater than `0` if job seed data is loaded and the resume is relevant.
-- `topJob` should be a real title from the loaded job set.
+- `count` is usually greater than `0` if job seed data is loaded and the resume is relevant.
+- `topJob` is a real title from the loaded job set.
 
-What this validates:
+This validates:
 
 - The uploaded resume was stored and can be referenced by `resumeId`.
-- The vectorization path works for the current embedding provider.
+- The real embedding path works.
 - `POST /api/matches/recommend` works.
-- Match ranking can complete without runtime errors.
+- Match ranking completes without runtime errors.
 
 ### 5. `gap`
 
-Example fields to inspect:
+Check:
 
 - `baselineRoles`
 - `missingSkills`
 - `insightCount`
 
-What should look correct:
+Expected:
 
-- `baselineRoles` should contain job titles used as comparison targets.
-- `insightCount` should normally be `3`.
+- `baselineRoles` contains job titles used as comparison targets.
+- `insightCount` is normally `3`.
 - `missingSkills` may be empty if the sample resume already covers many required skills.
 
-What this validates:
+This validates:
 
 - `POST /api/gap/report` works.
 - Matching output can be consumed by gap analysis.
-- Gap insight generation can call the configured LLM path and return structured output.
+- Gap insight generation calls the real Qwen path and returns structured output.
 
 ## Typical healthy result
 
 A healthy run usually looks like this:
 
 - `health.ai.llmProvider = qwen`
+- `health.ai.embeddingProvider = qwen`
 - `upload.skillCount > 0`
 - `upload.projectCount > 0`
 - `matches.count > 0`
 - `gap.insightCount = 3`
-
-If `direct` works but `upload` fails, the problem is usually in the backend API layer, file parsing, or stored resume flow.
-
-If `upload` works but the frontend page still shows no result, the problem is usually on the frontend fetch or page-state side rather than the LLM itself.
 
 ## Failure patterns
 
@@ -228,10 +219,6 @@ If `upload` works but the frontend page still shows no result, the problem is us
 Symptoms:
 
 - API returns an error like `Qwen chat request timed out after ... seconds.`
-
-Meaning:
-
-- The backend reached DashScope, but the model response did not complete before the configured timeout.
 
 Recommended checks:
 
@@ -244,10 +231,6 @@ Recommended checks:
 Symptoms:
 
 - Errors such as socket permission issues or `URLError`.
-
-Meaning:
-
-- The local terminal environment cannot access DashScope even if another process might.
 
 Recommended checks:
 
@@ -263,43 +246,8 @@ Meaning:
 Recommended checks:
 
 - Confirm startup seed data loaded correctly.
-- Reduce strict filtering assumptions if this is unexpected.
+- Re-import jobs using the real Qwen import path if needed.
 - Try a resume that is closer to the seeded job set.
-
-### Resume page shows no result
-
-Meaning:
-
-- Either upload failed and the frontend now surfaces the error, or the matches page could not load the stored resume by `resumeId`.
-
-Recommended checks:
-
-- Inspect backend logs for `/api/resumes/upload`.
-- Re-run the script in `upload` mode using the same backend instance.
-
-## Logic covered by this script
-
-Using `--mode direct` verifies:
-
-- Real DashScope / Qwen connectivity.
-- LLM request composition.
-- LLM JSON response parsing.
-- Resume normalization.
-
-Using `--mode upload` verifies:
-
-- Resume upload API.
-- Multipart handling.
-- Resume parsing and processing service.
-- LLM-based resume extraction.
-- Resume persistence and lookup by `resumeId`.
-- Matching API.
-- Gap analysis API.
-
-Using `--mode both` verifies:
-
-- The real LLM itself is reachable.
-- The backend upload chain also works end to end.
 
 ## Suggested test order
 

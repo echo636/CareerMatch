@@ -21,7 +21,6 @@ except ImportError:  # pragma: no cover
 load_dotenv(BASE_DIR / ".env")
 
 from app.bootstrap import _build_embedding_client, _build_llm_client
-from app.clients.llm import MockLLMClient
 from app.clients.vector_store import SqliteVectorStore
 from app.core.config import get_settings
 from app.core.logging_utils import configure_logging, get_logger, to_log_json
@@ -32,7 +31,7 @@ from app.services.job_pipeline import JobPipelineService
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Offline import jobs into the persistent CareerMatch store."
+        description="Offline import jobs into the persistent CareerMatch store using real Qwen APIs."
     )
     parser.add_argument(
         "--input",
@@ -122,7 +121,7 @@ def main() -> int:
     print_status(f"loaded {len(records)} job records from source file.")
     logger.info("offline_import.loaded_records count=%s", len(records))
 
-    llm_client = _build_llm_client(settings, MockLLMClient())
+    llm_client = _build_llm_client(settings)
     embedding_client = _build_embedding_client(settings)
     SqliteResumeRepository(state_db_path)
     repository = SqliteJobRepository(state_db_path)

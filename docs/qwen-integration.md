@@ -1,22 +1,15 @@
-﻿# Qwen Integration
+# Qwen Integration
 
-The backend now supports switching from mock AI to real Qwen services without changing the user-facing API used by the frontend.
+The backend now uses real Qwen services for both structured extraction and embeddings.
 
 ## What changed
 
-- `LLM_PROVIDER` controls whether resume extraction and gap insights use `mock` or `qwen`.
-- `EMBEDDING_PROVIDER` controls whether vectorization uses the local hash embedding or Qwen embeddings.
-- Startup seed jobs still use the mock extractor to avoid paying for LLM calls on every backend startup.
-- If a Qwen request fails, the API returns `502` instead of silently corrupting the response shape.
+- `LLM_PROVIDER` must be `qwen`.
+- `EMBEDDING_PROVIDER` must be `qwen`.
+- Startup seed jobs are also imported through the real Qwen job normalization path.
+- If a Qwen request fails, the API returns an explicit error instead of silently fabricating a local fallback result.
 
-## Recommended rollout
-
-1. Start with `LLM_PROVIDER=qwen` and `EMBEDDING_PROVIDER=mock`.
-2. Verify `POST /api/resumes/upload` and `POST /api/gap/report`.
-3. After the structured output quality is acceptable, switch `EMBEDDING_PROVIDER=qwen`.
-4. Re-import jobs with `python backend/import_jobs_offline.py ...` and re-upload resumes so all stored vectors share the same embedding model.
-
-## Environment variables
+## Required configuration
 
 Copy `backend/.env.example` to `backend/.env`, then set:
 
@@ -29,20 +22,16 @@ QWEN_EMBEDDING_MODEL=text-embedding-v4
 QWEN_EMBEDDING_DIMENSIONS=1024
 ```
 
-You can also keep `EMBEDDING_PROVIDER=mock` during the first phase to reduce cost while validating extraction quality.
+## Recommended validation
 
-## Smoke test
-
-After starting the backend, verify:
-
-- `GET /api/health` returns the selected providers and models.
-- Upload a real resume and confirm the response still contains `basicInfo`, `skills`, `projects`, and `expectedSalary`.
-- Run the offline job import script and confirm the persistent store contains jobs plus vectors.
-
-For a repeatable real-LLM test flow, see `docs/resume-flow-testing.md`.
+1. Start the backend.
+2. Verify `GET /api/health` returns the expected Qwen models.
+3. Upload a real resume and confirm the response still contains `basicInfo`, `skills`, `projects`, and `expectedSalary`.
+4. Re-import jobs with `python backend/import_jobs_offline.py ...` so persisted job vectors are rebuilt with the real embedding model.
+5. Run `backend/test/test_job_normalization_compare.py` to compare raw job JSON with processed JSON and confirm the real APIs return stable output.
 
 ## Notes
 
 - The Qwen client uses DashScope's OpenAI-compatible endpoint.
-- Structured extraction uses JSON-mode output plus local normalization, so downstream services keep the same shape even when the model omits optional fields.
+- Structured extraction still goes through local normalization after the model response, so downstream services keep the same JSON shape.
 - If you change the embedding model or dimensions, rebuild the persistent vectors from fresh source data.

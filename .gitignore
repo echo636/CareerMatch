@@ -32,3 +32,4 @@ Thumbs.db
 job_data.go
 resume_data.go
 backend/logs/
+backend/test/reports/

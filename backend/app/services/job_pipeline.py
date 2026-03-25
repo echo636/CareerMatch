@@ -53,6 +53,12 @@ class JobPipelineService:
         logger.info("job_pipeline.list count=%s", len(jobs))
         return jobs
 
+    def normalize_record(self, record: dict[str, Any]) -> JobProfile:
+        return self._normalize(record)
+
+    def vector_payload_for(self, job: JobProfile) -> str:
+        return self._vector_payload(job)
+
     def _normalize(self, record: dict[str, Any]) -> JobProfile:
         extracted = self.llm_client.extract_job(record)
         job = JobProfile(

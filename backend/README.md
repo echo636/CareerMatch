@@ -1,4 +1,4 @@
-﻿# CareerMatch Backend
+# CareerMatch Backend
 
 Flask backend scaffold for resume parsing, job ingestion, matching, and gap analysis.
 
@@ -47,5 +47,5 @@ python convert_job_seed.py --input data/pageflux_dev_jobs_2026-03-23_172811.sql 
 
 Notes:
 
-- With `LLM_PROVIDER=mock`, the dump can be used for smoke tests and basic matching tests, but skill extraction is heuristic.
-- With `LLM_PROVIDER=qwen`, the same data is more suitable for realistic matching tests because structured fields can be re-extracted from the full JD text.
+- The backend now expects `LLM_PROVIDER=qwen` and `EMBEDDING_PROVIDER=qwen`.
+- The PageFlux dump is suitable for realistic matching tests because structured fields can be re-extracted from the full JD text through the real Qwen pipeline.

@@ -12,37 +12,20 @@ import urllib.request
 
 from app.core.logging_utils import get_logger
 from app.domain.models import GapInsight
+from app.job_enrichment import (
+    build_job_context_text,
+    clean_text,
+    first_present,
+    infer_education,
+    infer_highlights,
+    infer_responsibilities,
+    infer_salary,
+    infer_skills,
+    infer_topics,
+    infer_years_range,
+)
 
 
-KNOWN_SKILLS = [
-    "Python",
-    "Flask",
-    "FastAPI",
-    "React",
-    "Next.js",
-    "TypeScript",
-    "PostgreSQL",
-    "Qdrant",
-    "pgvector",
-    "Docker",
-    "LLM",
-    "Embedding",
-    "Prompt Design",
-    "Redis",
-]
-KNOWN_PROJECT_TERMS = [
-    "Resume Parsing",
-    "Job Matching",
-    "Semantic Search",
-    "Scoring System",
-    "Recommendation System",
-    "Data Ingestion",
-    "Service Orchestration",
-    "Gap Analysis",
-    "Agent",
-    "Vector Search",
-    "Prompt Engineering",
-]
 CURRENT_YEAR = datetime.now().year
 DEFAULT_QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_RESUME_SUMMARY = "Resume summary pending."
@@ -70,154 +53,6 @@ class BaseLLMClient(ABC):
         raise NotImplementedError
 
 
-class MockLLMClient(BaseLLMClient):
-    def extract_resume(self, raw_text: str, file_name: str, resume_id: str) -> dict[str, Any]:
-        skills = self._extract_terms(raw_text, KNOWN_SKILLS) or ["Python", "LLM"]
-        projects = self._extract_terms(raw_text, KNOWN_PROJECT_TERMS) or ["Resume Parsing", "Job Matching"]
-        years = self._extract_years(raw_text, default=5)
-        salary_min, salary_max = self._extract_salary(raw_text, 25000, 35000)
-        summary = raw_text.strip()[:200] or DEFAULT_RESUME_SUMMARY
-        title = self._infer_resume_title(raw_text)
-        return {
-            "id": resume_id,
-            "is_resume": True,
-            "basic_info": {
-                "name": Path(file_name).stem.replace("_", " ").strip() or "Unnamed Candidate",
-                "work_years": years,
-                "current_title": title,
-                "summary": summary,
-                "self_evaluation": summary,
-            },
-            "educations": [],
-            "work_experiences": [
-                {
-                    "company_name": "Company Pending",
-                    "title": title,
-                    "responsibilities": [f"Led delivery of {projects[0]} related work."],
-                    "achievements": ["Shipped features from requirement analysis to production."],
-                    "tech_stack": skills[:5],
-                }
-            ],
-            "projects": [
-                {
-                    "name": project,
-                    "role": "Core Contributor",
-                    "domain": "Intelligent Recruiting",
-                    "description": f"Built a solution around {project}.",
-                    "responsibilities": [f"Owned the {project} module."],
-                    "achievements": [f"Accumulated reusable experience on {project}."],
-                    "tech_stack": skills[:4],
-                }
-                for project in projects[:3]
-            ],
-            "skills": [
-                {
-                    "name": skill,
-                    "level": "advanced" if index < 3 else "intermediate",
-                    "years": years if index < 2 else max(years - 1, 1),
-                    "last_used_year": CURRENT_YEAR,
-                }
-                for index, skill in enumerate(skills)
-            ],
-            "tags": [
-                *[{"name": skill, "category": "tech"} for skill in skills],
-                *[{"name": project, "category": "project"} for project in projects],
-                {"name": "Intelligent Recruiting", "category": "domain"},
-            ],
-            "expected_salary": {"min": salary_min, "max": salary_max, "currency": "CNY"},
-        }
-
-    def extract_job(self, payload: dict[str, Any]) -> dict[str, Any]:
-        raw_text = payload.get("summary") or payload.get("raw_text") or payload.get("description") or ""
-        basic_info = payload.get("basic_info") or {}
-        skill_requirements = payload.get("skill_requirements") or {}
-        experience_requirements = payload.get("experience_requirements") or {}
-        skills = payload.get("skills") or self._extract_terms(raw_text, KNOWN_SKILLS) or ["Python"]
-        projects = payload.get("project_keywords") or self._extract_terms(raw_text, KNOWN_PROJECT_TERMS) or ["Recommendation System"]
-        years = int(payload.get("experience_years") or self._extract_years(raw_text, default=3))
-        salary = payload.get("salary_range") or {}
-        required = skill_requirements.get("required") or [{"name": name} for name in skills[:2]]
-        return {
-            "id": payload.get("id") or payload.get("job_id") or f"job-{abs(hash(raw_text or payload.get('title', 'job'))) % 100000}",
-            "company": payload.get("company", "Company Pending"),
-            "basic_info": {
-                "title": payload.get("title") or basic_info.get("title") or "Untitled Role",
-                "department": payload.get("department") or basic_info.get("department"),
-                "location": payload.get("location") or basic_info.get("location") or "Remote",
-                "job_type": payload.get("job_type") or basic_info.get("job_type") or "fulltime",
-                "salary_negotiable": basic_info.get("salary_negotiable"),
-                "salary_min": payload.get("salary_min") or basic_info.get("salary_min") or salary.get("min") or 20000,
-                "salary_max": payload.get("salary_max") or basic_info.get("salary_max") or salary.get("max") or 30000,
-                "currency": payload.get("salary_currency") or basic_info.get("currency") or salary.get("currency") or "CNY",
-                "summary": raw_text or basic_info.get("summary") or DEFAULT_JOB_SUMMARY,
-                "responsibilities": payload.get("responsibilities") or basic_info.get("responsibilities") or [],
-                "highlights": payload.get("highlights") or basic_info.get("highlights") or [],
-            },
-            "skill_requirements": {
-                "required": required,
-                "optional_groups": skill_requirements.get("optional_groups") or [],
-                "bonus": skill_requirements.get("bonus") or [{"name": skill, "weight": 5} for skill in skills[2:5]],
-            },
-            "experience_requirements": {
-                "core": experience_requirements.get("core") or [
-                    {"type": "project", "name": project, "min_years": max(years - 1, 1), "keywords": [project]}
-                    for project in projects[:2]
-                ],
-                "bonus": experience_requirements.get("bonus") or [],
-                "min_total_years": experience_requirements.get("min_total_years") or years,
-                "max_total_years": experience_requirements.get("max_total_years"),
-            },
-            "education_constraints": payload.get("education_constraints") or {
-                "min_degree": None,
-                "prefer_degrees": [],
-                "required_majors": [],
-                "preferred_majors": [],
-                "languages": [],
-                "certifications": [],
-                "age_range": None,
-                "other": [],
-            },
-            "tags": payload.get("tags") or [
-                *[{"name": skill, "category": "tech", "weight": 5} for skill in skills[:4]],
-                *[{"name": project, "category": "project", "weight": 4} for project in projects[:3]],
-            ],
-        }
-
-    def generate_gap_insights(
-        self,
-        missing_skills: list[str],
-        salary_gap: int,
-        experience_gap_years: int,
-    ) -> list[GapInsight]:
-        return [
-            GapInsight("技能", "已具备一定的项目落地能力。", f"优先补齐这些核心短板：{' / '.join(missing_skills[:3]) or '暂无明显技能缺口'}。", "优先围绕岗位匹配、向量检索和数据调度补一条可量化项目案例。"),
-            GapInsight("薪资", "当前预期与目标岗位存在一定差距。" if salary_gap > 0 else "当前预期与目标岗位基本重合。", f"通过量化项目结果，将薪资谈判差距控制在 {salary_gap} 元以内。", "补充匹配准确率、召回率和业务转化类指标，增强议价能力。"),
-            GapInsight("经验", "现有经验已覆盖部分核心场景。", f"再补 {experience_gap_years} 年等价复杂度的系统设计与数据链路经验。", "围绕批量导入、异步任务和评估回放补一条完整工程案例。"),
-        ]
-
-    def _extract_terms(self, raw_text: str, dictionary: list[str]) -> list[str]:
-        text = raw_text.lower()
-        return [term for term in dictionary if term.lower() in text]
-
-    def _extract_years(self, raw_text: str, default: int) -> int:
-        match = re.search(r"(\d+)\s*(?:年|years?)", raw_text, re.IGNORECASE)
-        return int(match.group(1)) if match else default
-
-    def _extract_salary(self, raw_text: str, default_min: int, default_max: int) -> tuple[int, int]:
-        matches = re.findall(r"(\d{4,5})", raw_text)
-        if len(matches) >= 2:
-            values = sorted(int(item) for item in matches[:2])
-            return values[0], values[1]
-        return default_min, default_max
-
-    def _infer_resume_title(self, raw_text: str) -> str:
-        lowered = raw_text.lower()
-        if "agent" in lowered or "llm" in lowered:
-            return "AI 应用工程师"
-        if "flask" in lowered or "fastapi" in lowered:
-            return "后端工程师"
-        return "候选人"
-
 
 class QwenLLMClient(BaseLLMClient):
     def __init__(
@@ -229,7 +64,6 @@ class QwenLLMClient(BaseLLMClient):
         timeout_sec: int = 120,
         retry_count: int = 2,
         retry_backoff_sec: float = 2.0,
-        fallback_client: BaseLLMClient | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -237,18 +71,13 @@ class QwenLLMClient(BaseLLMClient):
         self.timeout_sec = timeout_sec
         self.retry_count = max(retry_count, 0)
         self.retry_backoff_sec = max(retry_backoff_sec, 0.0)
-        self.fallback_client = fallback_client or MockLLMClient()
     def extract_resume(self, raw_text: str, file_name: str, resume_id: str) -> dict[str, Any]:
-        fallback = self.fallback_client.extract_resume(raw_text, file_name, resume_id)
         payload = self._chat_json(self._resume_messages(raw_text, file_name, resume_id))
-        merged = self._merge(fallback, payload)
-        return self._normalize_resume(merged, raw_text, file_name, resume_id)
+        return self._normalize_resume(payload, raw_text, file_name, resume_id)
 
     def extract_job(self, payload: dict[str, Any]) -> dict[str, Any]:
-        fallback = self.fallback_client.extract_job(payload)
         model_payload = self._chat_json(self._job_messages(payload))
-        merged = self._merge(fallback, model_payload)
-        return self._normalize_job(merged, payload)
+        return self._normalize_job(model_payload, payload)
 
     def generate_gap_insights(
         self,
@@ -256,15 +85,10 @@ class QwenLLMClient(BaseLLMClient):
         salary_gap: int,
         experience_gap_years: int,
     ) -> list[GapInsight]:
-        fallback = self.fallback_client.generate_gap_insights(
-            missing_skills,
-            salary_gap,
-            experience_gap_years,
-        )
         payload = self._chat_json(self._gap_messages(missing_skills, salary_gap, experience_gap_years))
         raw_items = payload.get("insights") if isinstance(payload, dict) else None
         if not isinstance(raw_items, list):
-            return fallback
+            raise RuntimeError("Qwen gap insights response did not include an insights list.")
 
         insights: list[GapInsight] = []
         for item in raw_items:
@@ -278,17 +102,11 @@ class QwenLLMClient(BaseLLMClient):
                 continue
             insights.append(GapInsight(dimension, current_state, target_state, suggestion))
 
-        if not insights:
-            return fallback
-
-        seen = {item.dimension for item in insights}
-        for item in fallback:
-            if len(insights) >= 3:
-                break
-            if item.dimension in seen:
-                continue
-            insights.append(item)
-        return insights[:3]
+        if len(insights) != 3:
+            raise RuntimeError(
+                f"Qwen gap insights response returned {len(insights)} valid insights; expected 3."
+            )
+        return insights
 
     def _resume_messages(self, raw_text: str, file_name: str, resume_id: str) -> list[dict[str, str]]:
         return [
@@ -343,6 +161,8 @@ class QwenLLMClient(BaseLLMClient):
                     "- education min_degree should prefer: high_school, college, associate, bachelor, master, mba, phd, doctor.\n"
                     "- language items must contain language, level, required.\n"
                     "- salary should be monthly CNY when inferable.\n"
+                    "- When fields are null or empty but inferable from the provided context, fill them instead of leaving them empty.\n"
+                    "- Especially try to infer responsibilities, highlights, experience years, degree, majors, languages, certifications, and salary-related fields when the text makes them clear.\n"
                     "- Return a single JSON object only.\n"
                     f"job_payload={json.dumps(payload, ensure_ascii=False)}"
                 ),
@@ -368,7 +188,7 @@ class QwenLLMClient(BaseLLMClient):
                 "content": (
                     "Return exactly one JSON object with key insights. insights must be a list of exactly 3 items.\n"
                     "Each item must contain: dimension, current_state, target_state, suggestion.\n"
-                    "The three dimensions must be 技能, 薪资, 经验.\n"
+                    "The three dimensions must be \u6280\u80fd, \u85aa\u8d44, \u7ecf\u9a8c.\n"
                     f"missing_skills={json.dumps(missing_skills, ensure_ascii=False)}\n"
                     f"salary_gap={salary_gap}\n"
                     f"experience_gap_years={experience_gap_years}"
@@ -530,18 +350,6 @@ class QwenLLMClient(BaseLLMClient):
             start = stripped.find("{", start + 1)
         return stripped
 
-    def _merge(self, base: Any, override: Any) -> Any:
-        if override is None:
-            return base
-        if isinstance(base, dict) and isinstance(override, dict):
-            merged = dict(base)
-            for key, value in override.items():
-                merged[key] = self._merge(base.get(key), value) if key in base else value
-            return merged
-        if isinstance(override, str) and not override.strip():
-            return base
-        return override
-
     def _normalize_resume(
         self,
         payload: Any,
@@ -600,59 +408,186 @@ class QwenLLMClient(BaseLLMClient):
         skill_requirements = self._as_dict(data.get("skill_requirements"))
         experience_requirements = self._as_dict(data.get("experience_requirements"))
         education_constraints = self._as_dict(data.get("education_constraints"))
-        fallback_text = self._clean_text(original_payload.get("summary")) or self._clean_text(original_payload.get("raw_text")) or self._clean_text(original_payload.get("description")) or ""
-        title = self._clean_text(data.get("title")) or self._clean_text(basic_info.get("title")) or self._clean_text(original_payload.get("title")) or "Untitled Role"
+        source_basic_info = self._as_dict(original_payload.get("basic_info"))
+        source_skill_requirements = self._as_dict(original_payload.get("skill_requirements"))
+        source_experience_requirements = self._as_dict(original_payload.get("experience_requirements"))
+        source_education_constraints = self._as_dict(original_payload.get("education_constraints"))
+        context_text = build_job_context_text(original_payload)
+
+        title = self._clean_text(data.get("title")) or self._clean_text(basic_info.get("title")) or self._clean_text(original_payload.get("title")) or self._clean_text(source_basic_info.get("title")) or "Untitled Role"
+        inferred_skills = infer_skills(original_payload, context_text)
+        inferred_topics = infer_topics(original_payload, title, context_text)
+        inferred_responsibilities = infer_responsibilities(original_payload, context_text)
+        inferred_highlights = infer_highlights(original_payload, context_text)
+        inferred_min_years, inferred_max_years = infer_years_range(context_text)
+        inferred_salary = infer_salary(context_text)
+        inferred_education = infer_education(context_text)
         source_salary = self._as_dict(original_payload.get("salary_range"))
+
         salary_min, salary_max = self._normalize_optional_salary_range(
             basic_info.get("salary_min"),
             basic_info.get("salary_max"),
+            source_basic_info.get("salary_min"),
+            source_basic_info.get("salary_max"),
             original_payload.get("salary_min"),
             original_payload.get("salary_max"),
             source_salary.get("min"),
             source_salary.get("max"),
+            inferred_salary.get("salary_min"),
+            inferred_salary.get("salary_max"),
         )
+
+        responsibilities = self._string_list(basic_info.get("responsibilities"))
+        if not responsibilities:
+            responsibilities = self._string_list(original_payload.get("responsibilities"))
+        if not responsibilities:
+            responsibilities = self._string_list(source_basic_info.get("responsibilities"))
+        if not responsibilities:
+            responsibilities = inferred_responsibilities
+
+        highlights = self._string_list(basic_info.get("highlights"))
+        if not highlights:
+            highlights = self._string_list(original_payload.get("highlights"))
+        if not highlights:
+            highlights = self._string_list(source_basic_info.get("highlights"))
+        if not highlights:
+            highlights = inferred_highlights
+
+        required_items = [self._normalize_required_skill(item) for item in self._as_list(skill_requirements.get("required"))]
+        if not required_items:
+            required_items = [self._normalize_required_skill(item) for item in self._as_list(source_skill_requirements.get("required"))]
+        if not required_items:
+            required_items = [self._normalize_required_skill({"name": name}) for name in inferred_skills[:3]]
+
+        optional_groups = [self._normalize_optional_group(item) for item in self._as_list(skill_requirements.get("optional_groups"))]
+        if not optional_groups:
+            optional_groups = [self._normalize_optional_group(item) for item in self._as_list(source_skill_requirements.get("optional_groups"))]
+
+        bonus_items = [self._normalize_bonus_skill(item) for item in self._as_list(skill_requirements.get("bonus"))]
+        if not bonus_items:
+            bonus_items = [self._normalize_bonus_skill(item) for item in self._as_list(source_skill_requirements.get("bonus"))]
+        if not bonus_items:
+            bonus_items = [
+                self._normalize_bonus_skill({"name": skill, "weight": max(5 - index, 1)})
+                for index, skill in enumerate(inferred_skills[3:8])
+            ]
+
+        core_items = [self._normalize_experience_item(item) for item in self._as_list(experience_requirements.get("core"))]
+        if not core_items:
+            core_items = [self._normalize_experience_item(item) for item in self._as_list(source_experience_requirements.get("core"))]
+        if not core_items:
+            core_items = [
+                self._normalize_experience_item({"type": "project", "name": topic, "keywords": [topic]})
+                for topic in inferred_topics[:2]
+            ]
+
+        bonus_experience_items = [self._normalize_bonus_experience_item(item) for item in self._as_list(experience_requirements.get("bonus"))]
+        if not bonus_experience_items:
+            bonus_experience_items = [self._normalize_bonus_experience_item(item) for item in self._as_list(source_experience_requirements.get("bonus"))]
+
+        languages = [self._normalize_language(item) for item in self._as_list(education_constraints.get("languages"))]
+        if not languages:
+            languages = [self._normalize_language(item) for item in self._as_list(source_education_constraints.get("languages"))]
+        if not languages:
+            languages = [self._normalize_language(item) for item in inferred_education.get("languages") or []]
+
+        tags = [self._normalize_job_tag(item) for item in self._as_list(data.get("tags"))]
+        if not tags:
+            tags = [self._normalize_job_tag(item) for item in self._as_list(original_payload.get("tags"))]
+        if not tags:
+            tags = [
+                *[
+                    self._normalize_job_tag({"name": skill, "category": "tech", "weight": 5 if index < 3 else 4})
+                    for index, skill in enumerate(inferred_skills[:8])
+                ],
+                *[
+                    self._normalize_job_tag({"name": topic, "category": "project", "weight": 4})
+                    for topic in inferred_topics[:3]
+                ],
+            ]
+
+        salary_negotiable = first_present(
+            self._bool_or_none(basic_info.get("salary_negotiable")),
+            self._bool_or_none(source_basic_info.get("salary_negotiable")),
+            self._bool_or_none(original_payload.get("salary_negotiable")),
+            inferred_salary.get("salary_negotiable"),
+        )
+        salary_months_min = first_present(
+            self._int_or_none(basic_info.get("salary_months_min")),
+            self._int_or_none(source_basic_info.get("salary_months_min")),
+            self._int_or_none(original_payload.get("salary_months_min")),
+            inferred_salary.get("salary_months_min"),
+        )
+        salary_months_max = first_present(
+            self._int_or_none(basic_info.get("salary_months_max")),
+            self._int_or_none(source_basic_info.get("salary_months_max")),
+            self._int_or_none(original_payload.get("salary_months_max")),
+            inferred_salary.get("salary_months_max"),
+        )
+        intern_salary_amount = first_present(
+            self._int_or_none(basic_info.get("intern_salary_amount")),
+            self._int_or_none(source_basic_info.get("intern_salary_amount")),
+            self._int_or_none(original_payload.get("intern_salary_amount")),
+            inferred_salary.get("intern_salary_amount"),
+        )
+        intern_salary_unit = first_present(
+            self._clean_text(basic_info.get("intern_salary_unit")),
+            self._clean_text(source_basic_info.get("intern_salary_unit")),
+            self._clean_text(original_payload.get("intern_salary_unit")),
+            inferred_salary.get("intern_salary_unit"),
+        )
+
         return {
-            "id": self._clean_text(data.get("id")) or self._clean_text(original_payload.get("id")) or self._clean_text(original_payload.get("job_id")) or f"job-{abs(hash(fallback_text or title)) % 100000}",
-            "company": self._clean_text(data.get("company")) or self._clean_text(original_payload.get("company")) or "Company Pending",
+            "id": self._clean_text(data.get("id")) or self._clean_text(original_payload.get("id")) or self._clean_text(original_payload.get("job_id")) or f"job-{abs(hash(context_text or title)) % 100000}",
+            "company": self._clean_text(data.get("company")) or self._clean_text(original_payload.get("company")) or self._clean_text(original_payload.get("company_name")) or "Company Pending",
             "basic_info": {
                 "title": title,
-                "department": self._clean_text(basic_info.get("department")) or self._clean_text(original_payload.get("department")),
-                "location": self._clean_text(basic_info.get("location")) or self._clean_text(original_payload.get("location")) or "Remote",
-                "job_type": self._clean_text(basic_info.get("job_type")) or self._clean_text(original_payload.get("job_type")) or "fulltime",
-                "salary_negotiable": self._bool_or_none(basic_info.get("salary_negotiable")),
+                "department": self._clean_text(basic_info.get("department")) or self._clean_text(source_basic_info.get("department")) or self._clean_text(original_payload.get("department")),
+                "location": self._clean_text(basic_info.get("location")) or self._clean_text(source_basic_info.get("location")) or self._clean_text(original_payload.get("location")) or "Remote",
+                "job_type": self._clean_text(basic_info.get("job_type")) or self._clean_text(source_basic_info.get("job_type")) or self._clean_text(original_payload.get("job_type")) or "fulltime",
+                "salary_negotiable": salary_negotiable,
                 "salary_min": salary_min,
                 "salary_max": salary_max,
-                "salary_months_min": self._int_or_none(basic_info.get("salary_months_min")),
-                "salary_months_max": self._int_or_none(basic_info.get("salary_months_max")),
-                "intern_salary_amount": self._int_or_none(basic_info.get("intern_salary_amount")),
-                "intern_salary_unit": self._clean_text(basic_info.get("intern_salary_unit")),
-                "currency": self._clean_text(basic_info.get("currency")) or self._clean_text(original_payload.get("salary_currency")) or "CNY",
-                "summary": self._clean_text(basic_info.get("summary")) or fallback_text or DEFAULT_JOB_SUMMARY,
-                "responsibilities": self._string_list(basic_info.get("responsibilities")),
-                "highlights": self._string_list(basic_info.get("highlights")),
+                "salary_months_min": salary_months_min,
+                "salary_months_max": salary_months_max,
+                "intern_salary_amount": intern_salary_amount,
+                "intern_salary_unit": intern_salary_unit,
+                "currency": self._clean_text(basic_info.get("currency")) or self._clean_text(source_basic_info.get("currency")) or self._clean_text(original_payload.get("salary_currency")) or self._clean_text(source_salary.get("currency")) or self._clean_text(inferred_salary.get("currency")) or "CNY",
+                "summary": self._clean_text(basic_info.get("summary")) or self._clean_text(source_basic_info.get("summary")) or self._clean_text(original_payload.get("summary")) or self._clean_text(original_payload.get("raw_text")) or self._clean_text(original_payload.get("description")) or context_text or DEFAULT_JOB_SUMMARY,
+                "responsibilities": responsibilities,
+                "highlights": highlights,
             },
             "skill_requirements": {
-                "required": [self._normalize_required_skill(item) for item in self._as_list(skill_requirements.get("required"))],
-                "optional_groups": [self._normalize_optional_group(item) for item in self._as_list(skill_requirements.get("optional_groups"))],
-                "bonus": [self._normalize_bonus_skill(item) for item in self._as_list(skill_requirements.get("bonus"))],
+                "required": required_items,
+                "optional_groups": optional_groups,
+                "bonus": bonus_items,
             },
             "experience_requirements": {
-                "core": [self._normalize_experience_item(item) for item in self._as_list(experience_requirements.get("core"))],
-                "bonus": [self._normalize_bonus_experience_item(item) for item in self._as_list(experience_requirements.get("bonus"))],
-                "min_total_years": self._float_or_none(experience_requirements.get("min_total_years")),
-                "max_total_years": self._float_or_none(experience_requirements.get("max_total_years")),
+                "core": core_items,
+                "bonus": bonus_experience_items,
+                "min_total_years": first_present(
+                    self._positive_float_or_none(experience_requirements.get("min_total_years")),
+                    self._positive_float_or_none(source_experience_requirements.get("min_total_years")),
+                    self._positive_float_or_none(original_payload.get("experience_years")),
+                    inferred_min_years,
+                ),
+                "max_total_years": first_present(
+                    self._positive_float_or_none(experience_requirements.get("max_total_years")),
+                    self._positive_float_or_none(source_experience_requirements.get("max_total_years")),
+                    inferred_max_years,
+                ),
             },
             "education_constraints": {
-                "min_degree": self._clean_text(education_constraints.get("min_degree")),
-                "prefer_degrees": self._string_list(education_constraints.get("prefer_degrees")),
-                "required_majors": self._string_list(education_constraints.get("required_majors")),
-                "preferred_majors": self._string_list(education_constraints.get("preferred_majors")),
-                "languages": [self._normalize_language(item) for item in self._as_list(education_constraints.get("languages"))],
-                "certifications": self._string_list(education_constraints.get("certifications")),
-                "age_range": self._clean_text(education_constraints.get("age_range")),
-                "other": self._string_list(education_constraints.get("other")),
+                "min_degree": self._clean_text(education_constraints.get("min_degree")) or self._clean_text(source_education_constraints.get("min_degree")) or self._clean_text(inferred_education.get("min_degree")),
+                "prefer_degrees": self._string_list(education_constraints.get("prefer_degrees")) or self._string_list(source_education_constraints.get("prefer_degrees")) or list(inferred_education.get("prefer_degrees") or []),
+                "required_majors": self._string_list(education_constraints.get("required_majors")) or self._string_list(source_education_constraints.get("required_majors")) or list(inferred_education.get("required_majors") or []),
+                "preferred_majors": self._string_list(education_constraints.get("preferred_majors")) or self._string_list(source_education_constraints.get("preferred_majors")) or list(inferred_education.get("preferred_majors") or []),
+                "languages": languages,
+                "certifications": self._string_list(education_constraints.get("certifications")) or self._string_list(source_education_constraints.get("certifications")) or list(inferred_education.get("certifications") or []),
+                "age_range": self._clean_text(education_constraints.get("age_range")) or self._clean_text(source_education_constraints.get("age_range")) or self._clean_text(inferred_education.get("age_range")),
+                "other": self._string_list(education_constraints.get("other")) or self._string_list(source_education_constraints.get("other")) or list(inferred_education.get("other") or []),
             },
-            "tags": [self._normalize_job_tag(item) for item in self._as_list(data.get("tags"))],
+            "tags": tags,
         }
     def _normalize_resume_education(self, item: Any) -> dict[str, Any]:
         payload = self._as_dict(item)
@@ -743,22 +678,28 @@ class QwenLLMClient(BaseLLMClient):
 
     def _normalize_experience_item(self, item: Any) -> dict[str, Any]:
         payload = self._as_dict(item)
+        description = self._clean_text(payload.get("description"))
+        keywords = self._string_list(payload.get("keywords"))
+        name = self._clean_text(payload.get("name")) or description or (keywords[0] if keywords else None) or "Experience Pending"
         return {
             "type": self._clean_text(payload.get("type")) or "project",
-            "name": self._clean_text(payload.get("name")) or "Experience Pending",
-            "min_years": self._float_or_none(payload.get("min_years")),
-            "description": self._clean_text(payload.get("description")),
-            "keywords": self._string_list(payload.get("keywords")),
+            "name": name,
+            "min_years": self._positive_float_or_none(payload.get("min_years")),
+            "description": description,
+            "keywords": keywords,
         }
 
     def _normalize_bonus_experience_item(self, item: Any) -> dict[str, Any]:
         payload = self._as_dict(item)
+        description = self._clean_text(payload.get("description"))
+        keywords = self._string_list(payload.get("keywords"))
+        name = self._clean_text(payload.get("name")) or description or (keywords[0] if keywords else None) or "Experience Pending"
         return {
             "type": self._clean_text(payload.get("type")) or "project",
-            "name": self._clean_text(payload.get("name")) or "Experience Pending",
+            "name": name,
             "weight": self._int_or_none(payload.get("weight")),
-            "description": self._clean_text(payload.get("description")),
-            "keywords": self._string_list(payload.get("keywords")),
+            "description": description,
+            "keywords": keywords,
         }
 
     def _normalize_language(self, item: Any) -> dict[str, Any]:
@@ -780,14 +721,14 @@ class QwenLLMClient(BaseLLMClient):
     def _normalize_dimension(self, value: Any) -> str | None:
         text = (self._clean_text(value) or "").lower()
         mapping = {
-            "skill": "技能",
-            "skills": "技能",
-            "技能": "技能",
-            "salary": "薪资",
-            "compensation": "薪资",
-            "薪资": "薪资",
-            "经验": "经验",
-            "experience": "经验",
+            "skill": "\u6280\u80fd",
+            "skills": "\u6280\u80fd",
+            "\u6280\u80fd": "\u6280\u80fd",
+            "salary": "\u85aa\u8d44",
+            "compensation": "\u85aa\u8d44",
+            "\u85aa\u8d44": "\u85aa\u8d44",
+            "\u7ecf\u9a8c": "\u7ecf\u9a8c",
+            "experience": "\u7ecf\u9a8c",
         }
         return mapping.get(text, self._clean_text(value))
 
@@ -833,6 +774,12 @@ class QwenLLMClient(BaseLLMClient):
         except (TypeError, ValueError):
             return None
 
+    def _positive_float_or_none(self, value: Any) -> float | None:
+        parsed = self._float_or_none(value)
+        if parsed is None or parsed <= 0:
+            return None
+        return parsed
+
     def _bool_or_none(self, value: Any) -> bool | None:
         if isinstance(value, bool):
             return value
@@ -859,8 +806,8 @@ class QwenLLMClient(BaseLLMClient):
 
     def _normalize_optional_salary_range(self, *values: Any) -> tuple[int | None, int | None]:
         ints = [self._int_or_none(value) for value in values]
-        salary_min = next((ints[index] for index in (0, 2, 4) if ints[index] is not None), None)
-        salary_max = next((ints[index] for index in (1, 3, 5) if ints[index] is not None), None)
+        salary_min = next((ints[index] for index in range(0, len(ints), 2) if ints[index] is not None), None)
+        salary_max = next((ints[index] for index in range(1, len(ints), 2) if ints[index] is not None), None)
         if salary_min is None and salary_max is None:
             return None, None
         if salary_min is None:
@@ -870,5 +817,7 @@ class QwenLLMClient(BaseLLMClient):
         if salary_min is not None and salary_max is not None and salary_min > salary_max:
             salary_min, salary_max = salary_max, salary_min
         return salary_min, salary_max
+
+
 
 

@@ -63,8 +63,8 @@ def get_settings() -> Settings:
         debug=os.getenv("FLASK_DEBUG", "0") == "1",
         port=int(os.getenv("PORT", "5000")),
         frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
-        llm_provider=os.getenv("LLM_PROVIDER", "mock").strip().lower(),
-        embedding_provider=os.getenv("EMBEDDING_PROVIDER", "mock").strip().lower(),
+        llm_provider=os.getenv("LLM_PROVIDER", "qwen").strip().lower(),
+        embedding_provider=os.getenv("EMBEDDING_PROVIDER", "qwen").strip().lower(),
         qdrant_url=os.getenv("QDRANT_URL", "http://localhost:6333"),
         postgres_dsn=os.getenv(
             "POSTGRES_DSN",

@@ -1,0 +1,582 @@
+from __future__ import annotations
+
+from typing import Any
+import re
+
+from app.job_seed_loader import _extract_skills
+
+PLACEHOLDER_TEXTS = {
+    "company pending",
+    "untitled role",
+    "job description pending.",
+    "skill pending",
+    "experience pending",
+    "optional skills",
+    "language pending",
+    "tag pending",
+}
+
+RESPONSIBILITY_MARKERS = ["岗位职责", "工作职责", "职责描述", "职位职责", "工作内容", "你将参与", "职责"]
+HIGHLIGHT_SECTION_MARKERS = ["福利待遇", "加分项", "优选条件", "优先条件", "优选项", "加分"]
+SECTION_END_MARKERS = [
+    "岗位要求",
+    "任职要求",
+    "任职资格",
+    "职位要求",
+    "我们希望你",
+    "岗位核心方向补充",
+    "福利待遇",
+    "加分项",
+    "优选条件",
+    "优先条件",
+    "其他要求",
+]
+HIGHLIGHT_KEYWORDS = [
+    "优先",
+    "加分",
+    "优选",
+    "福利",
+    "待遇",
+    "可转正",
+    "弹性",
+    "双休",
+    "六险一金",
+    "期权",
+    "奖金",
+    "补贴",
+    "餐补",
+    "房补",
+    "落户",
+    "班车",
+    "商业保险",
+]
+LANGUAGE_PATTERNS = {
+    "英语": ["英语", "英文", "cet-4", "cet4", "cet-6", "cet6", "四级", "六级", "toeic", "toefl", "ielts"],
+    "日语": ["日语", "jlpt", "n1", "n2"],
+    "韩语": ["韩语"],
+    "法语": ["法语"],
+    "德语": ["德语"],
+}
+CERTIFICATION_PATTERNS = [
+    "PMP",
+    "CPA",
+    "CFA",
+    "软考",
+    "信息系统项目管理师",
+    "教师资格证",
+    "证券从业",
+    "基金从业",
+    "一级建造师",
+    "二级建造师",
+    "注册会计师",
+]
+MAJOR_STOPWORDS = {
+    "相关专业",
+    "专业",
+    "等",
+    "以及",
+    "及",
+    "或",
+    "优先",
+    "者优先",
+    "岗位要求",
+    "任职要求",
+    "任职资格",
+    "职位要求",
+    "我们希望你",
+    "具备",
+    "本科",
+    "硕士",
+    "博士",
+    "学历",
+    "海内外",
+    "统招",
+}
+TOPIC_LEADING_VERBS = ("负责", "参与", "协助", "推进", "完成", "执行", "主导", "支持", "开展", "进行")
+
+
+def clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.lower() in PLACEHOLDER_TEXTS:
+        return None
+    return text
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = clean_text(value)
+        if not text:
+            continue
+        marker = text.lower()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        ordered.append(text)
+    return ordered
+
+
+def string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return _dedupe([str(item) for item in value])
+    if isinstance(value, tuple):
+        return _dedupe([str(item) for item in value])
+    text = clean_text(value)
+    return [text] if text else []
+
+
+def first_present(*values: Any) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not clean_text(value):
+            continue
+        if isinstance(value, list) and not value:
+            continue
+        return value
+    return None
+
+
+def build_job_context_text(payload: dict[str, Any]) -> str:
+    basic_info = payload.get("basic_info") or {}
+    parts: list[str] = []
+
+    primary_text = first_present(
+        payload.get("summary"),
+        basic_info.get("summary"),
+        payload.get("raw_text"),
+        payload.get("description"),
+    )
+    parts.extend(
+        value
+        for value in [
+            payload.get("title"),
+            basic_info.get("title"),
+            primary_text,
+            payload.get("department"),
+            basic_info.get("department"),
+            payload.get("location"),
+            basic_info.get("location"),
+        ]
+        if clean_text(value)
+    )
+    return "\n".join(_dedupe(parts))
+
+
+def infer_skills(payload: dict[str, Any], text: str) -> list[str]:
+    candidates: list[str] = []
+    candidates.extend(string_list(payload.get("skills")))
+
+    skill_requirements = payload.get("skill_requirements") or {}
+    for item in skill_requirements.get("required") or []:
+        if isinstance(item, dict):
+            name = clean_text(item.get("name"))
+            if name:
+                candidates.append(name)
+    for item in skill_requirements.get("bonus") or []:
+        if isinstance(item, dict):
+            name = clean_text(item.get("name"))
+            if name:
+                candidates.append(name)
+    for group in skill_requirements.get("optional_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for skill in group.get("skills") or []:
+            if isinstance(skill, dict):
+                name = clean_text(skill.get("name"))
+                if name:
+                    candidates.append(name)
+
+    for tag in payload.get("tags") or []:
+        if not isinstance(tag, dict):
+            continue
+        if (clean_text(tag.get("category")) or "").lower() == "tech":
+            name = clean_text(tag.get("name"))
+            if name:
+                candidates.append(name)
+
+    candidates.extend(_extract_skills(text))
+    return _dedupe(candidates)
+
+
+def infer_topics(payload: dict[str, Any], title: str | None, text: str) -> list[str]:
+    del title
+    candidates: list[str] = []
+    candidates.extend(string_list(payload.get("project_keywords")))
+
+    experience = payload.get("experience_requirements") or {}
+    for item in (experience.get("core") or []) + (experience.get("bonus") or []):
+        if isinstance(item, dict):
+            name = clean_text(item.get("name"))
+            if name:
+                candidates.append(name)
+            candidates.extend(string_list(item.get("keywords")))
+
+    for tag in payload.get("tags") or []:
+        if not isinstance(tag, dict):
+            continue
+        category = (clean_text(tag.get("category")) or "").lower()
+        if category in {"project", "domain", "industry"}:
+            name = clean_text(tag.get("name"))
+            if name:
+                candidates.append(name)
+
+    return _dedupe(candidates)
+
+
+def infer_responsibilities(payload: dict[str, Any], text: str) -> list[str]:
+    basic_info = payload.get("basic_info") or {}
+    existing = string_list(payload.get("responsibilities")) or string_list(basic_info.get("responsibilities"))
+    if existing:
+        return existing
+    return _extract_section_items(text, RESPONSIBILITY_MARKERS, SECTION_END_MARKERS, max_items=8)
+
+
+def infer_highlights(payload: dict[str, Any], text: str) -> list[str]:
+    basic_info = payload.get("basic_info") or {}
+    existing = string_list(payload.get("highlights")) or string_list(basic_info.get("highlights"))
+    if existing:
+        return existing
+
+    highlights: list[str] = []
+    for marker in HIGHLIGHT_SECTION_MARKERS:
+        for item in _extract_section_items(text, [marker], SECTION_END_MARKERS, max_items=4):
+            normalized = _normalize_highlight_candidate(item)
+            if normalized:
+                highlights.append(normalized)
+    if highlights:
+        return _dedupe(highlights)[:6]
+
+    for sentence in _split_items(text):
+        normalized = _normalize_highlight_candidate(sentence)
+        if normalized and _looks_like_highlight(normalized):
+            highlights.append(normalized)
+    return _dedupe(highlights)[:6]
+
+
+def infer_years_range(text: str) -> tuple[float | None, float | None]:
+    range_match = re.search(
+        r"(?P<min>\d+(?:\.\d+)?)\s*[-~～至到]\s*(?P<max>\d+(?:\.\d+)?)\s*(?:年|years?)",
+        text,
+        re.IGNORECASE,
+    )
+    if range_match:
+        return float(range_match.group("min")), float(range_match.group("max"))
+
+    min_match = re.search(
+        r"(?P<min>\d+(?:\.\d+)?)\s*(?:年|years?)\s*(?:以上|及以上|或以上|起|\+)",
+        text,
+        re.IGNORECASE,
+    )
+    if min_match:
+        return float(min_match.group("min")), None
+
+    exact_match = re.search(
+        r"(?:至少|不少于)?\s*(?P<min>\d+(?:\.\d+)?)\s*(?:年|years?)经验",
+        text,
+        re.IGNORECASE,
+    )
+    if exact_match:
+        return float(exact_match.group("min")), None
+
+    return None, None
+
+
+def infer_salary(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    result: dict[str, Any] = {
+        "salary_negotiable": True if "面议" in text else None,
+        "salary_min": None,
+        "salary_max": None,
+        "salary_months_min": None,
+        "salary_months_max": None,
+        "intern_salary_amount": None,
+        "intern_salary_unit": None,
+        "currency": "CNY",
+    }
+
+    months_range = re.search(r"(?P<min>\d{1,2})\s*[-~～至到]\s*(?P<max>\d{1,2})\s*薪", text)
+    if months_range:
+        result["salary_months_min"] = int(months_range.group("min"))
+        result["salary_months_max"] = int(months_range.group("max"))
+    else:
+        months_single = re.search(r"(?P<months>\d{1,2})\s*薪", text)
+        if months_single:
+            months = int(months_single.group("months"))
+            result["salary_months_min"] = months
+            result["salary_months_max"] = months
+
+    daily_match = re.search(
+        r"(?P<min>\d+(?:\.\d+)?)\s*[-~～至到]\s*(?P<max>\d+(?:\.\d+)?)\s*元\s*/\s*天",
+        text,
+    )
+    if daily_match:
+        result["intern_salary_amount"] = int(round(float(daily_match.group("max"))))
+        result["intern_salary_unit"] = "元/天"
+        return result
+
+    monthly_k = re.search(r"(?P<min>\d+(?:\.\d+)?)\s*[-~～至到]\s*(?P<max>\d+(?:\.\d+)?)\s*[kK千]", text)
+    if monthly_k:
+        result["salary_min"] = int(round(float(monthly_k.group("min")) * 1000))
+        result["salary_max"] = int(round(float(monthly_k.group("max")) * 1000))
+        result["salary_negotiable"] = False
+        return result
+
+    monthly_plain = re.search(
+        r"(?P<min>\d{4,6})\s*[-~～至到]\s*(?P<max>\d{4,6})\s*(?:元/月|元|/月)?",
+        text,
+    )
+    if monthly_plain:
+        result["salary_min"] = int(monthly_plain.group("min"))
+        result["salary_max"] = int(monthly_plain.group("max"))
+        result["salary_negotiable"] = False
+        return result
+
+    yearly_wan = re.search(
+        r"(?P<min>\d+(?:\.\d+)?)\s*[-~～至到]\s*(?P<max>\d+(?:\.\d+)?)\s*[万wW]\s*/\s*年",
+        lower,
+    )
+    if yearly_wan:
+        result["salary_min"] = int(round(float(yearly_wan.group("min")) * 10000 / 12))
+        result["salary_max"] = int(round(float(yearly_wan.group("max")) * 10000 / 12))
+        result["salary_negotiable"] = False
+    return result
+
+
+def infer_education(text: str) -> dict[str, Any]:
+    min_degree = _infer_min_degree(text)
+    prefer_degrees = _infer_prefer_degrees(text)
+    required_majors = _infer_majors(text, preferred=False)
+    preferred_majors = _infer_majors(text, preferred=True)
+    languages = _infer_languages(text)
+    certifications = _infer_certifications(text)
+    age_range = _infer_age_range(text)
+    other = _infer_other_constraints(text)
+    return {
+        "min_degree": min_degree,
+        "prefer_degrees": prefer_degrees,
+        "required_majors": required_majors,
+        "preferred_majors": preferred_majors,
+        "languages": languages,
+        "certifications": certifications,
+        "age_range": age_range,
+        "other": other,
+    }
+
+
+def _extract_section_items(text: str, start_markers: list[str], end_markers: list[str], max_items: int) -> list[str]:
+    for marker in start_markers:
+        section = _extract_section_text(text, marker, end_markers)
+        if not section:
+            continue
+        items = _split_items(section)
+        if items:
+            return items[:max_items]
+    return []
+
+
+def _extract_section_text(text: str, start_marker: str, end_markers: list[str]) -> str | None:
+    start = text.find(start_marker)
+    if start == -1:
+        return None
+
+    section = text[start + len(start_marker) :]
+    section = re.sub(r"^[：:\-\s]+", "", section, count=1)
+    end_positions = [position for marker in end_markers if (position := section.find(marker)) != -1]
+    if end_positions:
+        section = section[: min(end_positions)]
+    return clean_text(section)
+
+
+def _normalize_topic_candidate(value: str) -> str | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    normalized = text
+    for verb in TOPIC_LEADING_VERBS:
+        if normalized.startswith(verb):
+            normalized = normalized[len(verb) :].strip("，,、；;。 ")
+            break
+    normalized = re.sub(r"(等工作|等相关工作|相关工作)$", "", normalized).strip("，,、；;。 ")
+    if not normalized or len(normalized) < 4 or len(normalized) > 24:
+        return None
+    return normalized
+
+
+def _normalize_highlight_candidate(value: str) -> str | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    normalized = re.sub(r"^(?:\u9879|\u52a0\u5206\u9879|\u798f\u5229\u5f85\u9047|\u4f18\u9009\u6761\u4ef6|\u4f18\u5148\u6761\u4ef6)[?:\s-]*", "", text).strip()
+    normalized = re.sub(r"^(?:\d+|[??????????]+)[)?.??:?]\s*", "", normalized)
+    normalized = normalized.lstrip("?: ").strip("?,??; ")
+    normalized = re.sub(r"^[^A-Za-z0-9\u4e00-\u9fa5]+", "", normalized)
+    if not normalized:
+        return None
+    if re.fullmatch(r"[A-Za-z\u4e00-\u9fa5]+(?:/[A-Za-z\u4e00-\u9fa5]+)+", normalized):
+        return None
+    return normalized
+
+
+def _looks_like_highlight(sentence: str) -> bool:
+    if any(marker in sentence for marker in RESPONSIBILITY_MARKERS):
+        return False
+    if any(keyword in sentence for keyword in ["\u672c\u79d1", "\u7855\u58eb", "\u535a\u58eb", "\u7814\u7a76\u751f", "\u5b66\u5386", "\u4e13\u4e1a"]):
+        return False
+    return any(keyword in sentence for keyword in HIGHLIGHT_KEYWORDS)
+
+
+def _split_items(text: str) -> list[str]:
+    normalized = text.replace("\r", "\n")
+    normalized = re.sub(r"[•●▪■◆◇]", "\n", normalized)
+    normalized = re.sub(r"\s+(?:[-–—]|\|)\s+", "\n", normalized)
+    normalized = re.sub(r"(?:^|\n)\s*(?:\d+|[一二三四五六七八九十]+)[、.．:：)]\s*", "\n", normalized)
+    normalized = normalized.replace("；", "\n").replace(";", "\n")
+    normalized = re.sub(r"(?<=[。！？])\s*", "\n", normalized)
+
+    items: list[str] = []
+    for line in normalized.splitlines():
+        cleaned = re.sub(r"^[\-\d、.．:：()（）\s]+", "", line).strip()
+        cleaned = re.sub(
+            r"^(?:岗位职责|工作职责|职责描述|职位职责|工作内容|岗位要求|任职要求|任职资格|职位要求|福利待遇|加分项|优选条件|优先条件|优选项|其他要求)[：:\s-]*",
+            "",
+            cleaned,
+        )
+        cleaned = cleaned.strip("，,。；; ")
+        if len(cleaned) < 6:
+            continue
+        if any(marker in cleaned for marker in RESPONSIBILITY_MARKERS + SECTION_END_MARKERS):
+            continue
+        items.append(cleaned)
+    return _dedupe(items)
+
+
+def _infer_min_degree(text: str) -> str | None:
+    patterns = [
+        ("doctor", [r"博士及以上", r"博士研究生", r"phd", r"doctor"]),
+        ("master", [r"硕士及以上", r"硕士研究生", r"研究生及以上", r"master"]),
+        ("bachelor", [r"本科及以上", r"本科或以上", r"本科学历", r"学士", r"bachelor", r"统招本科"]),
+        ("associate", [r"大专及以上", r"专科及以上", r"associate", r"college"]),
+        ("high_school", [r"高中及以上", r"high school"]),
+    ]
+    for degree, regexes in patterns:
+        if any(re.search(regex, text, re.IGNORECASE) for regex in regexes):
+            return degree
+    return None
+
+
+def _infer_prefer_degrees(text: str) -> list[str]:
+    preferences: list[str] = []
+    patterns = [
+        ("doctor", [r"博士(?:学历)?优先", r"phd.+优先", r"doctor.+优先"]),
+        ("master", [r"硕士(?:学历)?优先", r"研究生优先", r"master.+优先"]),
+        ("bachelor", [r"本科(?:学历)?优先", r"学士优先", r"bachelor.+优先"]),
+    ]
+    for degree, regexes in patterns:
+        if any(re.search(regex, text, re.IGNORECASE) for regex in regexes):
+            preferences.append(degree)
+    return _dedupe(preferences)
+
+
+def _infer_majors(text: str, preferred: bool) -> list[str]:
+    regexes = [
+        r"(?P<majors>[\u4e00-\u9fa5A-Za-z/、，,\s]{2,80}?)(?:等)?相关专业(?:优先|者优先)?",
+        r"(?P<majors>[\u4e00-\u9fa5A-Za-z/、，,\s]{2,80}?)(?:等)?专业(?:优先|者优先)",
+    ]
+    results: list[str] = []
+    for regex in regexes:
+        for match in re.finditer(regex, text, re.IGNORECASE):
+            majors_text = clean_text(match.group("majors"))
+            if not majors_text:
+                continue
+            is_preferred = "优先" in match.group(0)
+            if is_preferred != preferred:
+                continue
+            majors_text = re.sub(r".*学历", "", majors_text)
+            majors_text = re.sub(r"\d{4}届|海内外|统招|学历|及以上|或研究生|或以上|以上", "", majors_text)
+            for major in re.split(r"[、,/，]\s*|\s+", majors_text):
+                token = _normalize_major_token(major)
+                if token:
+                    results.append(token)
+    return _dedupe(results)
+
+
+def _normalize_major_token(value: str) -> str | None:
+    token = clean_text(value)
+    if not token:
+        return None
+    token = re.sub(r"(相关专业|相关)$", "", token)
+    token = re.sub(r"(专业|类)$", "", token)
+    token = token.strip()
+    if not token or token in MAJOR_STOPWORDS or len(token) < 2:
+        return None
+    return token
+
+
+def _infer_languages(text: str) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for language, patterns in LANGUAGE_PATTERNS.items():
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            window_start = max(0, match.start() - 24)
+            window_end = min(len(text), match.end() + 24)
+            context = text[window_start:window_end]
+            level = None
+            if any(token in context.lower() for token in ["流利", "熟练", "可作为工作语言", "business"]):
+                level = "fluent"
+            elif any(token in context.lower() for token in ["cet-6", "cet6", "六级", "n1"]):
+                level = "advanced"
+            elif any(token in context.lower() for token in ["cet-4", "cet4", "四级", "n2"]):
+                level = "intermediate"
+            required = "优先" not in context and "加分" not in context
+            results.append({"language": language, "level": level, "required": required})
+            break
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in results:
+        key = item["language"].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _infer_certifications(text: str) -> list[str]:
+    found: list[str] = []
+    lower = text.lower()
+    for name in CERTIFICATION_PATTERNS:
+        if name.lower() in lower:
+            found.append(name)
+    return _dedupe(found)
+
+
+def _infer_age_range(text: str) -> str | None:
+    range_match = re.search(r"(?P<min>\d{2})\s*[-~～至到]\s*(?P<max>\d{2})\s*岁", text)
+    if range_match:
+        return f"{range_match.group('min')}-{range_match.group('max')}岁"
+    upper_match = re.search(r"(?P<max>\d{2})\s*岁(?:以下|以内)", text)
+    if upper_match:
+        return f"{upper_match.group('max')}岁以下"
+    lower_match = re.search(r"(?P<min>\d{2})\s*岁(?:以上|及以上)", text)
+    if lower_match:
+        return f"{lower_match.group('min')}岁以上"
+    return None
+
+
+def _infer_other_constraints(text: str) -> list[str]:
+    results: list[str] = []
+    for sentence in _split_items(text):
+        if any(
+            keyword in sentence
+            for keyword in ["每周", "到岗", "连续", "出差", "轮班", "驻场", "现场", "实习4", "实习5", "实习6", "个月以上"]
+        ):
+            results.append(sentence)
+    return _dedupe(results)[:6]
