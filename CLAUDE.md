@@ -34,16 +34,17 @@ npm run typecheck      # tsc --noEmit
 ## Architecture
 
 **Layered backend** in `backend/app/`:
-- `api/routes/` — Flask Blueprints: `health`, `resumes`, `jobs`, `matches`, `gap`
+- `api/routes/` — Flask Blueprints: `health`, `resumes`, `matches`, `gap`
 - `services/` — Business logic: `resume_pipeline`, `job_pipeline`, `matching`, `gap_analysis`
-- `clients/` — External adapters: `llm` (mock), `embedding`, `vector_store`, `document_parser`, `object_storage`
-- `repositories/in_memory.py` — In-memory data store (prototype for PostgreSQL/Qdrant)
+- `clients/` — External adapters: `llm` (Qwen/DashScope), `embedding` (Qwen), `qdrant_store` (Qdrant), `document_parser`, `object_storage`
+- `repositories/postgres.py` — PostgreSQL JSONB persistence for resumes and jobs
+- `repositories/payload_codec.py` — Shared JSON→dataclass deserialization for resume/job payloads
 - `domain/models.py` — Dataclass models (`ResumeProfile`, `JobProfile`, `MatchResult`, `GapReport`) with snake_case→camelCase serialization
 - `bootstrap.py` — Service container / dependency injection setup
 - `__init__.py` — Flask app factory
 
 **Frontend** in `frontend/`:
-- Next.js App Router in `app/` — pages: home, `/resume` (upload), `/matches` (results), `/admin/jobs` (import)
+- Next.js App Router in `app/` — pages: home, `/resume` (upload), `/matches` (results)
 - `lib/` — API client utilities
 - `types/` — TypeScript type definitions matching backend models
 
@@ -51,20 +52,18 @@ npm run typecheck      # tsc --noEmit
 
 ## Key Design Decisions
 
-- **Mock integrations**: LLM client uses regex/keyword matching, vector store uses SHA256-based pseudo-vectors. All clients are abstracted behind interfaces for future swap to real services (Qdrant, OpenAI/Claude, MinIO).
+- **Real integrations**: LLM uses Qwen (DashScope API), embeddings use Qwen text-embedding-v4, vectors stored in Qdrant, structured data in PostgreSQL (JSONB).
 - **Matching weights**: vector similarity 20%, skills 35%, experience 25%, education 10%, salary 10% (in `services/matching.py`).
 - **DI via service container**: All services/clients are wired in `bootstrap.py` — add new dependencies there.
 - **JSON serialization**: `domain/models.py` auto-converts snake_case fields to camelCase for API responses.
+- **Job import**: Done via offline script `import_jobs_offline.py`, not exposed as API endpoint.
 
 ## API Endpoints
 
 ```
 GET  /api/health
-GET  /api/resumes/demo
 GET  /api/resumes/<resume_id>
 POST /api/resumes/upload          # multipart file or text body
-GET  /api/jobs
-POST /api/jobs/import             # JSON array of jobs
-POST /api/matches/recommend       # { resumeId, topK }
-POST /api/gap/report              # { resumeId, topK }
+POST /api/matches/recommend       # { resume_id, top_k }
+POST /api/gap/report              # { resume_id, top_k }
 ```

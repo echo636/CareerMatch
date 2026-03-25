@@ -1,12 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
 from math import ceil
 from pathlib import Path
-import sqlite3
 import sys
 import time
+
+import psycopg
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
@@ -21,11 +22,11 @@ except ImportError:  # pragma: no cover
 load_dotenv(BASE_DIR / ".env")
 
 from app.bootstrap import _build_embedding_client, _build_llm_client
-from app.clients.vector_store import SqliteVectorStore
+from app.clients.qdrant_store import QdrantVectorStore
 from app.core.config import get_settings
 from app.core.logging_utils import configure_logging, get_logger, to_log_json
 from app.job_seed_loader import load_job_seed_records
-from app.repositories.sqlite import SqliteJobRepository, SqliteResumeRepository
+from app.repositories.postgres import PostgresJobRepository, PostgresResumeRepository
 from app.services.job_pipeline import JobPipelineService
 
 
@@ -55,11 +56,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Clear persisted jobs and job vectors before importing.",
     )
-    parser.add_argument(
-        "--state-db",
-        default="",
-        help="Optional override for APP_STATE_DB_PATH.",
-    )
     return parser.parse_args()
 
 
@@ -74,19 +70,18 @@ def resolve_path(value: str, default: Path) -> Path:
     return (BASE_DIR / path).resolve()
 
 
-def clear_jobs(db_path: Path) -> None:
-    with sqlite3.connect(db_path) as connection:
-        connection.execute("DELETE FROM jobs")
-        connection.execute("DELETE FROM vectors WHERE namespace = 'jobs'")
-        connection.commit()
+def clear_jobs(dsn: str, vector_store: QdrantVectorStore) -> None:
+    with psycopg.connect(dsn) as conn:
+        conn.execute("DELETE FROM jobs")
+        conn.commit()
+    vector_store.delete_all("jobs")
 
 
-def count_state(db_path: Path) -> dict[str, int]:
-    with sqlite3.connect(db_path) as connection:
-        jobs = int(connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
-        resumes = int(connection.execute("SELECT COUNT(*) FROM resumes").fetchone()[0])
-        vectors = int(connection.execute("SELECT COUNT(*) FROM vectors").fetchone()[0])
-    return {"jobs": jobs, "resumes": resumes, "vectors": vectors}
+def count_state(dsn: str) -> dict[str, int]:
+    with psycopg.connect(dsn) as conn:
+        jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        resumes = conn.execute("SELECT COUNT(*) FROM resumes").fetchone()[0]
+    return {"jobs": int(jobs), "resumes": int(resumes)}
 
 
 def print_status(message: str) -> None:
@@ -100,13 +95,13 @@ def main() -> int:
     logger = get_logger("scripts.import_jobs_offline")
 
     input_path = resolve_path(args.input, settings.job_seed_path)
-    state_db_path = resolve_path(args.state_db, settings.app_state_db_path)
     batch_size = max(args.batch_size, 1)
 
     logger.info(
-        "offline_import.start input=%s state_db=%s llm=%s embedding=%s batch_size=%s limit=%s replace_jobs=%s",
+        "offline_import.start input=%s postgres=%s qdrant=%s llm=%s embedding=%s batch_size=%s limit=%s replace_jobs=%s",
         input_path,
-        state_db_path,
+        settings.postgres_dsn,
+        settings.qdrant_url,
         settings.llm_provider,
         settings.embedding_provider,
         batch_size,
@@ -114,7 +109,7 @@ def main() -> int:
         args.replace_jobs,
     )
     print_status(
-        f"input={input_path}, db={state_db_path}, llm={settings.llm_provider}, embedding={settings.embedding_provider}"
+        f"input={input_path}, postgres={settings.postgres_dsn}, qdrant={settings.qdrant_url}"
     )
 
     records = load_job_seed_records(input_path, limit=args.limit)
@@ -123,14 +118,14 @@ def main() -> int:
 
     llm_client = _build_llm_client(settings)
     embedding_client = _build_embedding_client(settings)
-    SqliteResumeRepository(state_db_path)
-    repository = SqliteJobRepository(state_db_path)
-    vector_store = SqliteVectorStore(state_db_path)
+    PostgresResumeRepository(settings.postgres_dsn)
+    repository = PostgresJobRepository(settings.postgres_dsn)
+    vector_store = QdrantVectorStore(settings.qdrant_url, settings.qwen_embedding_dimensions)
 
     if args.replace_jobs:
         print_status("clearing persisted jobs and job vectors before import.")
-        clear_jobs(state_db_path)
-        logger.info("offline_import.cleared_existing_jobs state_db=%s", state_db_path)
+        clear_jobs(settings.postgres_dsn, vector_store)
+        logger.info("offline_import.cleared_existing_jobs")
 
     pipeline = JobPipelineService(
         repository=repository,
@@ -173,10 +168,10 @@ def main() -> int:
             batch_elapsed,
         )
 
-    state = count_state(state_db_path)
+    state = count_state(settings.postgres_dsn)
     payload = {
         "input": str(input_path),
-        "stateDb": str(state_db_path),
+        "postgres": settings.postgres_dsn,
         "imported": imported,
         "elapsedSec": round(time.monotonic() - started_at, 2),
         "dbCounts": state,

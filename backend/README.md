@@ -4,18 +4,25 @@ Flask backend scaffold for resume parsing, job ingestion, matching, and gap anal
 
 ## Persistent app state
 
-Structured resumes, structured jobs, and cached embeddings are persisted in SQLite.
-By default the backend writes them to `data/app_state.sqlite3`.
-You can override that location with:
+Structured resumes and jobs are persisted in **PostgreSQL** (JSONB).
+Embedding vectors are stored in **Qdrant** (cosine similarity, auto-created collections).
+
+Infrastructure (default via `docker compose up -d`):
+
+- PostgreSQL 16: `postgresql://careermatch:careermatch@localhost:5432/careermatch`
+- Qdrant v1.13.2: `http://localhost:6333`
+
+Configuration:
 
 ```env
-APP_STATE_DB_PATH=data/app_state.sqlite3
+POSTGRES_DSN=postgresql://careermatch:careermatch@localhost:5432/careermatch
+QDRANT_URL=http://localhost:6333
 ```
 
 Behavior:
 
-- `/api/resumes/upload` parses the resume, computes its embedding once, then stores both the structured resume and vector cache.
-- `python import_jobs_offline.py` imports raw job data in the background, computes embeddings, and writes the structured jobs plus vector cache into SQLite.
+- `/api/resumes/upload` parses the resume, computes its embedding once, then stores the structured resume in PostgreSQL and the vector in Qdrant.
+- `python import_jobs_offline.py` imports raw job data in the background, computes embeddings, and writes structured jobs to PostgreSQL and vectors to Qdrant.
 - Later requests reuse the stored vectors as long as the derived vector payload for that item has not changed.
 - If the resume or job content changes, the backend recomputes the embedding and updates the stored cache.
 - On startup, default seed jobs are only imported when the persistent job store is empty.

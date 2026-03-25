@@ -1,17 +1,17 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
-import sqlite3
 import warnings
 
 from app.clients.document_parser import ResumeDocumentParser
 from app.clients.embedding import BaseEmbeddingClient, QwenEmbeddingClient
 from app.clients.llm import BaseLLMClient, QwenLLMClient
 from app.clients.object_storage import LocalObjectStorageClient
-from app.clients.vector_store import BaseVectorStore, SqliteVectorStore
+from app.clients.qdrant_store import QdrantVectorStore
+from app.clients.vector_store import BaseVectorStore
 from app.core.config import Settings
 from app.job_seed_loader import load_job_seed_records
-from app.repositories.sqlite import SqliteJobRepository, SqliteResumeRepository
+from app.repositories.postgres import PostgresJobRepository, PostgresResumeRepository
 from app.services.gap_analysis import GapAnalysisService
 from app.services.job_pipeline import JobPipelineService
 from app.services.matching import MatchingService
@@ -32,15 +32,16 @@ class ServiceContainer:
 def build_services(settings: Settings) -> ServiceContainer:
     llm_client = _build_llm_client(settings)
     embedding_client = _build_embedding_client(settings)
-    vector_store = SqliteVectorStore(settings.app_state_db_path)
+    vector_store = QdrantVectorStore(settings.qdrant_url, settings.qwen_embedding_dimensions)
     document_parser = ResumeDocumentParser()
     object_storage = LocalObjectStorageClient(settings.object_storage_root)
-    resume_repository = SqliteResumeRepository(settings.app_state_db_path)
-    job_repository = SqliteJobRepository(settings.app_state_db_path)
+    resume_repository = PostgresResumeRepository(settings.postgres_dsn)
+    job_repository = PostgresJobRepository(settings.postgres_dsn)
 
     initialize_persistent_data(
         settings=settings,
         job_repository=job_repository,
+        resume_repository=resume_repository,
         llm_client=llm_client,
         embedding_client=embedding_client,
         vector_store=vector_store,
@@ -127,24 +128,27 @@ def _seed_job_limit(settings: Settings) -> int | None:
     return REMOTE_STARTUP_JOB_LIMIT
 
 
-def _remove_legacy_demo_resume(settings: Settings) -> None:
-    with sqlite3.connect(settings.app_state_db_path) as connection:
-        connection.execute("DELETE FROM resumes WHERE id = 'demo-resume'")
-        connection.execute(
-            "DELETE FROM vectors WHERE namespace = 'resumes' AND item_id = 'demo-resume'"
-        )
-        connection.commit()
+def _remove_legacy_demo_resume(
+    resume_repository: PostgresResumeRepository,
+    vector_store: BaseVectorStore,
+) -> None:
+    resume_repository.delete("demo-resume")
+    try:
+        vector_store.delete("resumes", "demo-resume")
+    except Exception:
+        pass
 
 
 def initialize_persistent_data(
     *,
     settings: Settings,
-    job_repository: SqliteJobRepository,
+    job_repository: PostgresJobRepository,
+    resume_repository: PostgresResumeRepository,
     llm_client: BaseLLMClient,
     embedding_client: BaseEmbeddingClient,
     vector_store: BaseVectorStore,
 ) -> None:
-    _remove_legacy_demo_resume(settings)
+    _remove_legacy_demo_resume(resume_repository, vector_store)
     if job_repository.count() > 0:
         return
 

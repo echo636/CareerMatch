@@ -2,6 +2,7 @@
 from .embedding import BaseEmbeddingClient, QwenEmbeddingClient
 from .llm import BaseLLMClient, QwenLLMClient
 from .object_storage import LocalObjectStorageClient
+from .qdrant_store import QdrantVectorStore
 from .vector_store import BaseVectorStore, InMemoryVectorStore, SqliteVectorStore, StoredVector
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "StoredVector",
     "InMemoryVectorStore",
     "SqliteVectorStore",
+    "QdrantVectorStore",
 ]

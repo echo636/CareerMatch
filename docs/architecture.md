@@ -40,7 +40,7 @@ CareerMatch/
 - `backend/app/api/routes/`：Flask Blueprint 路由层，处理 HTTP 输入输出。
 - `backend/app/services/`：简历处理、匹配评分、Gap 分析等业务编排。
 - `backend/app/clients/`：LLM、Embedding、向量存储、文档解析器和对象存储适配层。
-- `backend/app/repositories/`：当前使用 SQLite 持久化结构化简历和岗位数据。
+- `backend/app/repositories/`：使用 PostgreSQL（JSONB）持久化结构化简历和岗位数据。
 - `backend/app/domain/`：领域模型与序列化逻辑。
 - `backend/import_jobs_offline.py`：后台离线岗位导入脚本，直接完成结构化、embedding 和持久化。
 
@@ -56,14 +56,14 @@ CareerMatch/
 
 1. 前端在 `/resume` 上传真实简历文件或文本。
 2. 后端解析文件文本，落盘原始文件，并生成结构化简历 JSON。
-3. 后端生成或复用该简历的 embedding，并持久化到 SQLite。
-4. 岗位数据通过后台离线脚本导入持久化库。
+3. 后端生成或复用该简历的 embedding，向量持久化到 Qdrant，结构化数据持久化到 PostgreSQL。
+4. 岗位数据通过后台离线脚本导入 PostgreSQL 和 Qdrant。
 5. 匹配页按 `resumeId` 拉取真实简历、匹配结果和 Gap 报告。
 6. Gap 分析依赖当前召回并通过过滤的岗位结果生成。
 
 ## 后续建议
 
-1. 将 SQLite 持久化替换为 PostgreSQL + Qdrant。
-2. 为离线导入脚本增加重试、断点续跑和统计输出。
-3. 为扫描版 PDF 增加 OCR 流程。
-4. 为后台岗位导入增加任务调度和状态监控。
+1. 为离线导入脚本增加重试、断点续跑和统计输出。
+2. 为扫描版 PDF 增加 OCR 流程。
+3. 为后台岗位导入增加任务调度和状态监控。
+4. 将本地文件存储替换为 MinIO。
