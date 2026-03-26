@@ -19,6 +19,7 @@ from app.domain.models import (
     ResumeProfile,
 )
 from app.repositories.in_memory import JobRepository, ResumeRepository
+from app.services.skill_aliases import normalize_skill_name
 
 LEVEL_RANK = {
     "basic": 1,
@@ -29,13 +30,21 @@ LEVEL_RANK = {
 
 DEGREE_RANK = {
     "high_school": 1,
+    "高中": 1,
     "college": 2,
     "associate": 2,
+    "大专": 2,
+    "专科": 2,
     "bachelor": 3,
+    "本科": 3,
+    "学士": 3,
     "master": 4,
     "mba": 4,
+    "硕士": 4,
+    "研究生": 4,
     "phd": 5,
     "doctor": 5,
+    "博士": 5,
 }
 
 logger = get_logger("services.matching")
@@ -63,7 +72,8 @@ class MatchingService:
             raise ValueError(f"Resume '{resume_id}' does not exist.")
 
         resume_vector = self._ensure_resume_vector(resume)
-        recall_size = max(top_k * 3, top_k)
+        job_count = self._job_count()
+        recall_size = self._dynamic_recall_size(top_k, job_count)
         recalled = self.vector_store.query("jobs", resume_vector, recall_size)
 
         candidate_skill_index = self._build_candidate_skill_index(resume)
@@ -106,8 +116,8 @@ class MatchingService:
                 candidate_skill_index,
                 candidate_terms,
             )
-            matched_skills = [skill for skill in job.skills if skill.lower() in candidate_skill_index]
-            missing_skills = [skill for skill in job.skills if skill.lower() not in candidate_skill_index]
+            matched_skills = [skill for skill in job.skills if self._normalize_skill(skill) in candidate_skill_index]
+            missing_skills = [skill for skill in job.skills if self._normalize_skill(skill) not in candidate_skill_index]
             match = MatchResult(
                 job=job,
                 breakdown=breakdown,
@@ -170,7 +180,55 @@ class MatchingService:
     ) -> tuple[bool, str]:
         if self._minimum_degree_gate(resume, job.education_constraints) < 0.5:
             return False, "education_below_threshold"
+        if self._salary_far_above_budget(resume, job):
+            return False, "salary_far_above_budget"
+        if self._direction_mismatch(resume, job):
+            return False, "direction_mismatch"
         return True, "passed"
+
+    def _salary_far_above_budget(self, resume: ResumeProfile, job: JobProfile) -> bool:
+        """Filter out jobs where the candidate's minimum salary expectation
+        is far above the job's maximum budget (> 1.5×)."""
+        if not job.has_salary_reference:
+            return False
+        if resume.expected_salary.min <= 0:
+            return False
+        return resume.expected_salary.min > job.salary_range.max * 1.5
+
+    def _direction_mismatch(self, resume: ResumeProfile, job: JobProfile) -> bool:
+        """Filter out jobs that have zero tag overlap with the resume when both sides
+        have meaningful tags, indicating a fundamental direction mismatch."""
+        resume_tags = {
+            normalize_skill_name(tag.name)
+            for tag in resume.tags
+            if (tag.category or "").lower() in {"tech", "domain", "industry"}
+        }
+        job_tags = {
+            normalize_skill_name(tag.name)
+            for tag in job.tags
+            if (tag.category or "").lower() in {"tech", "domain", "industry"}
+        }
+        if len(resume_tags) < 3 or len(job_tags) < 3:
+            return False
+        return len(resume_tags & job_tags) == 0
+
+    def _dynamic_recall_size(self, top_k: int, job_count: int) -> int:
+        """Scale recall multiplier based on job pool size."""
+        if job_count <= 50:
+            multiplier = 3
+        elif job_count <= 200:
+            multiplier = 5
+        elif job_count <= 1000:
+            multiplier = 8
+        else:
+            multiplier = 10
+        return max(top_k * multiplier, top_k)
+
+    def _job_count(self) -> int:
+        try:
+            return len(self.job_repository.list())
+        except Exception:
+            return 0
 
     def _build_breakdown(
         self,
@@ -291,6 +349,9 @@ class MatchingService:
                 self._upsert_skill(index, tag.name, None, None)
         return index
 
+    def _normalize_skill(self, name: str) -> str:
+        return normalize_skill_name(name)
+
     def _upsert_skill(
         self,
         index: dict[str, dict[str, float | str | None]],
@@ -298,7 +359,7 @@ class MatchingService:
         level: str | None,
         years: float | None,
     ) -> None:
-        normalized = name.strip().lower()
+        normalized = self._normalize_skill(name)
         if not normalized:
             return
         current = index.get(normalized)
@@ -350,7 +411,7 @@ class MatchingService:
         requirement: RequiredSkill,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
     ) -> float:
-        candidate = candidate_skill_index.get(requirement.name.lower())
+        candidate = candidate_skill_index.get(self._normalize_skill(requirement.name))
         if candidate is None:
             return 0.0
         scores = [1.0]
@@ -401,7 +462,7 @@ class MatchingService:
         skill: OptionalSkill,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
     ) -> float:
-        candidate = candidate_skill_index.get(skill.name.lower())
+        candidate = candidate_skill_index.get(self._normalize_skill(skill.name))
         if candidate is None:
             return 0.0
         if not skill.level:
@@ -428,7 +489,7 @@ class MatchingService:
         skill: BonusSkill,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
     ) -> float:
-        return 1.0 if skill.name.lower() in candidate_skill_index else 0.0
+        return 1.0 if self._normalize_skill(skill.name) in candidate_skill_index else 0.0
 
     def _core_experience_scores(
         self,
@@ -512,8 +573,8 @@ class MatchingService:
         if description:
             content_scores.append(self._term_hit_score(description, candidate_terms, raw_text, exact=False))
         if item_type.lower() == "tech":
-            tech_scores = [1.0 if name.lower() in candidate_skill_index else 0.0]
-            tech_scores.extend(1.0 if keyword.lower() in candidate_skill_index else 0.0 for keyword in keywords)
+            tech_scores = [1.0 if self._normalize_skill(name) in candidate_skill_index else 0.0]
+            tech_scores.extend(1.0 if self._normalize_skill(keyword) in candidate_skill_index else 0.0 for keyword in keywords)
             content_scores.append(max(tech_scores, default=0.0))
 
         content_score = max(content_scores, default=0.0)
@@ -634,7 +695,7 @@ class MatchingService:
 
     def _average(self, values: list[float]) -> float:
         if not values:
-            return 1.0
+            return 0.5
         return sum(values) / len(values)
 
     def _ratio_score(self, actual: float | None, target: float, unknown_floor: float = 0.65) -> float:
@@ -657,4 +718,3 @@ class MatchingService:
 
     def _degree_rank(self, degree: str | None) -> int:
         return DEGREE_RANK.get((degree or "").strip().lower(), 0)
-

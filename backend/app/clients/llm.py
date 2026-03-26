@@ -180,6 +180,11 @@ class QwenLLMClient(BaseLLMClient):
                     "- is_resume must be true.\n"
                     "- Unknown scalar fields use null. Unknown collections use [].\n"
                     "- Keep only factual information grounded in the resume. Do not invent companies or projects.\n"
+                    "- basic_info.current_company must be the candidate's MOST RECENT employer determined by date range, not by company prominence or order of appearance.\n"
+                    "- basic_info.current_title must be the candidate's MOST RECENT job title determined by date range.\n"
+                    "- work_experiences MUST be ordered by start_date DESCENDING (most recent experience first).\n"
+                    "- basic_info.summary should be a concise but COMPLETE professional summary (2-4 sentences). Do NOT truncate mid-sentence. If the resume contains a self-evaluation section, use it as-is.\n"
+                    "- basic_info.self_evaluation should contain the candidate's full self-evaluation text if present in the resume.\n"
                     "- skill level should prefer: basic, intermediate, advanced, expert.\n"
                     "- tag category should prefer: tech, project, domain, industry, education, language, general.\n"
                     "- expected_salary should be monthly CNY when inferable.\n"
@@ -413,7 +418,7 @@ class QwenLLMClient(BaseLLMClient):
         basic_info = self._as_dict(data.get("basic_info"))
         expected_salary = self._as_dict(data.get("expected_salary"))
         name = self._clean_text(basic_info.get("name")) or Path(file_name).stem.replace("_", " ").strip() or "Unnamed Candidate"
-        summary = self._clean_text(basic_info.get("summary")) or self._clean_text(basic_info.get("self_evaluation")) or raw_text.strip()[:200] or DEFAULT_RESUME_SUMMARY
+        summary = self._clean_text(basic_info.get("summary")) or self._clean_text(basic_info.get("self_evaluation")) or raw_text.strip()[:500] or DEFAULT_RESUME_SUMMARY
         salary_min, salary_max = self._ordered_int_pair(expected_salary.get("min"), expected_salary.get("max"), 25000, 35000)
         normalized_work_items = [
             self._normalize_resume_work(item) for item in self._as_list(data.get("work_experiences"))
@@ -875,7 +880,29 @@ class QwenLLMClient(BaseLLMClient):
 
         deduped = [best_by_key[key] for key in ordered_keys]
         deduped.extend(keyless_items)
-        return deduped
+        return self._sort_resume_work_by_date_desc(deduped)
+
+    def _sort_resume_work_by_date_desc(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sort work experiences by date descending (most recent first).
+
+        Ordering priority:
+        - end_date '至今' (present) comes first
+        - Then by end_date descending
+        - Then by start_date descending
+        - Items without any parseable date go last
+        """
+        def sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
+            end = self._normalize_resume_date_token(self._clean_text(item.get("end_date")))
+            start = self._normalize_resume_date_token(self._clean_text(item.get("start_date")))
+            if end == "至今":
+                return (0, "9999.99", start or "9999.99")
+            if end:
+                return (1, end, start or "0000.00")
+            if start:
+                return (2, start, "0000.00")
+            return (3, "0000.00", "0000.00")
+
+        return sorted(items, key=sort_key, reverse=True)
 
     def _resume_work_item_score(self, item: dict[str, Any]) -> int:
         score = 0

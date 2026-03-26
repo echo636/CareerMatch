@@ -144,6 +144,7 @@ def first_present(*values: Any) -> Any:
 
 def build_job_context_text(payload: dict[str, Any]) -> str:
     basic_info = payload.get("basic_info") or {}
+    jd_text = _extract_job_description_text(payload.get("jd"))
     parts: list[str] = []
 
     primary_text = first_present(
@@ -151,26 +152,39 @@ def build_job_context_text(payload: dict[str, Any]) -> str:
         basic_info.get("summary"),
         payload.get("raw_text"),
         payload.get("description"),
+        jd_text,
     )
     parts.extend(
         value
         for value in [
             payload.get("title"),
+            payload.get("job_name"),
             basic_info.get("title"),
             primary_text,
+            payload.get("salary"),
             payload.get("department"),
             basic_info.get("department"),
+            payload.get("city"),
+            payload.get("work_address"),
             payload.get("location"),
             basic_info.get("location"),
+            payload.get("education"),
+            payload.get("experience"),
+            payload.get("job_keys"),
+            payload.get("company_industry"),
         ]
         if clean_text(value)
     )
+    for tag in string_list(payload.get("skill_tags")):
+        parts.append(tag)
     return "\n".join(_dedupe(parts))
 
 
 def infer_skills(payload: dict[str, Any], text: str) -> list[str]:
     candidates: list[str] = []
     candidates.extend(string_list(payload.get("skills")))
+    candidates.extend(string_list(payload.get("skill_tags")))
+    candidates.extend(_split_delimited_values(payload.get("job_keys")))
 
     skill_requirements = payload.get("skill_requirements") or {}
     for item in skill_requirements.get("required") or []:
@@ -202,6 +216,52 @@ def infer_skills(payload: dict[str, Any], text: str) -> list[str]:
 
     candidates.extend(_extract_skills(text))
     return _dedupe(candidates)
+
+
+def _extract_job_description_text(value: Any) -> str | None:
+    if isinstance(value, dict):
+        return "\n".join(
+            item
+            for item in [
+                clean_text(value.get("requirements")),
+                clean_text(value.get("infos")),
+                clean_text(value.get("jobStrength")),
+                clean_text(value.get("text")),
+            ]
+            if item
+        ) or None
+
+    text = clean_text(value)
+    if not text:
+        return None
+    if not text.startswith("{"):
+        return text
+
+    try:
+        import json
+
+        payload = json.loads(text)
+    except Exception:
+        return text
+    if not isinstance(payload, dict):
+        return text
+    return "\n".join(
+        item
+        for item in [
+            clean_text(payload.get("requirements")),
+            clean_text(payload.get("infos")),
+            clean_text(payload.get("jobStrength")),
+            clean_text(payload.get("text")),
+        ]
+        if item
+    ) or text
+
+
+def _split_delimited_values(value: Any) -> list[str]:
+    text = clean_text(value)
+    if not text:
+        return []
+    return _dedupe(re.split(r"[,，/|、;；]+", text))
 
 
 def infer_topics(payload: dict[str, Any], title: str | None, text: str) -> list[str]:

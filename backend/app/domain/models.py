@@ -125,7 +125,7 @@ class ResumeProfile:
         return (
             self.basic_info.summary
             or self.basic_info.self_evaluation
-            or self.raw_text.strip()[:200]
+            or self.raw_text.strip()[:500]
             or "Resume summary pending."
         )
 

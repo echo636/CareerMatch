@@ -22,6 +22,7 @@ from app.domain.models import (
     OptionalSkillGroup,
     RequiredSkill,
 )
+from app.job_enrichment import clean_text
 
 logger = get_logger("services.job_pipeline")
 
@@ -72,7 +73,11 @@ class JobPipelineService:
             education_constraints=self._build_education_constraints(
                 extracted.get("education_constraints") or {}
             ),
-            tags=[self._build_tag(item) for item in extracted.get("tags") or []],
+            tags=[
+                item
+                for item in (self._build_tag(tag) for tag in extracted.get("tags") or [])
+                if item is not None
+            ],
         )
         logger.info(
             "job_pipeline.normalize job_id=%s title=%s required_skills=%s bonus_skills=%s",
@@ -134,18 +139,41 @@ class JobPipelineService:
         )
 
     def _build_skill_requirements(self, payload: dict[str, Any]) -> JobSkillRequirements:
+        required = [
+            item
+            for item in (self._build_required_skill(item) for item in payload.get("required") or [])
+            if item is not None
+        ]
+        optional_groups = [
+            item
+            for item in (self._build_optional_group(item) for item in payload.get("optional_groups") or [])
+            if item is not None
+        ]
+        bonus = [
+            item
+            for item in (self._build_bonus_skill(item) for item in payload.get("bonus") or [])
+            if item is not None
+        ]
         return JobSkillRequirements(
-            required=[self._build_required_skill(item) for item in payload.get("required") or []],
-            optional_groups=[
-                self._build_optional_group(item) for item in payload.get("optional_groups") or []
-            ],
-            bonus=[self._build_bonus_skill(item) for item in payload.get("bonus") or []],
+            required=required,
+            optional_groups=optional_groups,
+            bonus=bonus,
         )
 
     def _build_experience_requirements(self, payload: dict[str, Any]) -> JobExperienceRequirements:
+        core = [
+            item
+            for item in (self._build_core_experience(item) for item in payload.get("core") or [])
+            if item is not None
+        ]
+        bonus = [
+            item
+            for item in (self._build_bonus_experience(item) for item in payload.get("bonus") or [])
+            if item is not None
+        ]
         return JobExperienceRequirements(
-            core=[self._build_core_experience(item) for item in payload.get("core") or []],
-            bonus=[self._build_bonus_experience(item) for item in payload.get("bonus") or []],
+            core=core,
+            bonus=bonus,
             min_total_years=payload.get("min_total_years"),
             max_total_years=payload.get("max_total_years"),
         )
@@ -156,70 +184,103 @@ class JobPipelineService:
             prefer_degrees=list(payload.get("prefer_degrees") or []),
             required_majors=list(payload.get("required_majors") or []),
             preferred_majors=list(payload.get("preferred_majors") or []),
-            languages=[self._build_language(item) for item in payload.get("languages") or []],
+            languages=[
+                item
+                for item in (self._build_language(item) for item in payload.get("languages") or [])
+                if item is not None
+            ],
             certifications=list(payload.get("certifications") or []),
             age_range=payload.get("age_range"),
             other=list(payload.get("other") or []),
         )
 
-    def _build_required_skill(self, payload: dict[str, Any]) -> RequiredSkill:
+    def _build_required_skill(self, payload: dict[str, Any]) -> RequiredSkill | None:
+        name = clean_text(payload.get("name"))
+        if not name:
+            return None
         return RequiredSkill(
-            name=str(payload.get("name") or "Skill Pending"),
+            name=name,
             level=payload.get("level"),
             min_years=payload.get("min_years"),
             description=payload.get("description"),
         )
 
-    def _build_optional_group(self, payload: dict[str, Any]) -> OptionalSkillGroup:
+    def _build_optional_group(self, payload: dict[str, Any]) -> OptionalSkillGroup | None:
+        group_name = clean_text(payload.get("group_name")) or "Optional Skills"
+        skills = [
+            item
+            for item in (self._build_optional_skill(item) for item in payload.get("skills") or [])
+            if item is not None
+        ]
+        if not skills:
+            return None
         return OptionalSkillGroup(
-            group_name=str(payload.get("group_name") or "Optional Skills"),
+            group_name=group_name,
             description=payload.get("description"),
             min_required=int(payload.get("min_required", 1)),
-            skills=[self._build_optional_skill(item) for item in payload.get("skills") or []],
+            skills=skills,
         )
 
-    def _build_optional_skill(self, payload: dict[str, Any]) -> OptionalSkill:
+    def _build_optional_skill(self, payload: dict[str, Any]) -> OptionalSkill | None:
+        name = clean_text(payload.get("name"))
+        if not name:
+            return None
         return OptionalSkill(
-            name=str(payload.get("name") or "Skill Pending"),
+            name=name,
             level=payload.get("level"),
             description=payload.get("description"),
         )
 
-    def _build_bonus_skill(self, payload: dict[str, Any]) -> BonusSkill:
+    def _build_bonus_skill(self, payload: dict[str, Any]) -> BonusSkill | None:
+        name = clean_text(payload.get("name"))
+        if not name:
+            return None
         return BonusSkill(
-            name=str(payload.get("name") or "Skill Pending"),
+            name=name,
             weight=payload.get("weight"),
             description=payload.get("description"),
         )
 
-    def _build_core_experience(self, payload: dict[str, Any]) -> CoreExperience:
+    def _build_core_experience(self, payload: dict[str, Any]) -> CoreExperience | None:
+        name = clean_text(payload.get("name"))
+        if not name:
+            return None
         return CoreExperience(
             type=str(payload.get("type") or "project"),
-            name=str(payload.get("name") or "Experience Pending"),
+            name=name,
             min_years=payload.get("min_years"),
             description=payload.get("description"),
             keywords=list(payload.get("keywords") or []),
         )
 
-    def _build_bonus_experience(self, payload: dict[str, Any]) -> BonusExperience:
+    def _build_bonus_experience(self, payload: dict[str, Any]) -> BonusExperience | None:
+        name = clean_text(payload.get("name"))
+        if not name:
+            return None
         return BonusExperience(
             type=str(payload.get("type") or "project"),
-            name=str(payload.get("name") or "Experience Pending"),
+            name=name,
             weight=payload.get("weight"),
             description=payload.get("description"),
             keywords=list(payload.get("keywords") or []),
         )
 
-    def _build_language(self, payload: dict[str, Any]) -> LanguageRequirement:
+    def _build_language(self, payload: dict[str, Any]) -> LanguageRequirement | None:
+        language = clean_text(payload.get("language"))
+        if not language:
+            return None
         return LanguageRequirement(
-            language=str(payload.get("language") or "Language Pending"),
+            language=language,
             level=payload.get("level"),
             required=bool(payload.get("required", False)),
         )
 
-    def _build_tag(self, payload: dict[str, Any]) -> JobTag:
+    def _build_tag(self, payload: dict[str, Any]) -> JobTag | None:
+        name = clean_text(payload.get("name"))
+        if not name:
+            return None
         return JobTag(
-            name=str(payload.get("name") or "Tag Pending"),
+            name=name,
             category=payload.get("category"),
             weight=payload.get("weight"),
         )

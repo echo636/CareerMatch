@@ -125,9 +125,208 @@ def _load_json_records(path: Path, limit: int | None) -> list[dict[str, Any]]:
         records = payload
     if not isinstance(records, list):
         raise ValueError(f"JSON job seed must be a list or an object with 'jobs': {path}")
+    normalized_records = [
+        _normalize_json_job_record(item) if isinstance(item, dict) else item
+        for item in records
+    ]
     if limit is None:
-        return records
-    return records[:limit]
+        return normalized_records
+    return normalized_records[:limit]
+
+
+def _normalize_json_job_record(record: dict[str, Any]) -> dict[str, Any]:
+    if _looks_like_standard_job_record(record):
+        return record
+    if _looks_like_zhaopin_job_record(record):
+        return _map_zhaopin_json_record(record)
+    if _looks_like_niuke_job_record(record):
+        return _map_niuke_job_record(record)
+    return record
+
+
+def _looks_like_standard_job_record(record: dict[str, Any]) -> bool:
+    return any(
+        key in record
+        for key in ("title", "description", "summary", "skill_requirements", "education_constraints")
+    )
+
+
+def _looks_like_niuke_job_record(record: dict[str, Any]) -> bool:
+    return "job_name" in record and "jd" in record and "job_keys" in record
+
+
+def _looks_like_zhaopin_job_record(record: dict[str, Any]) -> bool:
+    return "job_name" in record and "jd" in record and any(
+        key in record for key in ("skill_tags", "education", "experience", "work_address")
+    )
+
+
+def _map_niuke_job_record(record: dict[str, Any]) -> dict[str, Any]:
+    title = _clean_text(record.get("job_name")) or _clean_text(record.get("career_job")) or "Untitled Role"
+    jd_payload = _parse_embedded_jd(record.get("jd"))
+    requirements = _clean_text(jd_payload.get("requirements"))
+    infos = _clean_text(jd_payload.get("infos"))
+    job_strength = _clean_text(jd_payload.get("jobStrength"))
+    salary_text = _clean_text(record.get("salary"))
+    location = _clean_text(record.get("city"))
+    company = _clean_text(record.get("company")) or "Company Pending"
+    topic_tags = _split_delimited_text(record.get("job_keys"))
+    context_text = _build_text_blob(
+        [
+            title,
+            salary_text,
+            location,
+            requirements,
+            infos,
+            job_strength,
+            record.get("job_keys"),
+        ]
+    )
+    skills = _extract_skills(context_text)
+    salary_fields = _parse_salary_text(salary_text)
+    min_years, max_years = _parse_experience_text(context_text)
+    min_degree = _extract_min_degree_from_text(context_text)
+
+    return {
+        "id": _extract_job_id(record) or _clean_text(record.get("_detail_url")),
+        "job_name": record.get("job_name"),
+        "title": title,
+        "company": company,
+        "location": location,
+        "salary": salary_text,
+        "salary_currency": salary_fields["currency"],
+        "salary_negotiable": salary_fields["salary_negotiable"],
+        "salary_min": salary_fields["salary_min"],
+        "salary_max": salary_fields["salary_max"],
+        "salary_months_min": salary_fields["salary_months_min"],
+        "salary_months_max": salary_fields["salary_months_max"],
+        "summary": infos or requirements or title,
+        "description": _build_text_blob([requirements, infos, job_strength]),
+        "raw_text": context_text,
+        "responsibilities": _string_list([infos] if infos else []),
+        "highlights": _string_list([job_strength] if job_strength else []),
+        "skills": skills,
+        "skill_requirements": {
+            "required": [{"name": skill} for skill in skills[:3]],
+            "optional_groups": [],
+            "bonus": [
+                {"name": skill, "weight": max(5 - index, 1)}
+                for index, skill in enumerate(skills[3:8])
+            ],
+        },
+        "experience_years": min_years,
+        "experience_requirements": {
+            "core": [],
+            "bonus": [],
+            "min_total_years": min_years,
+            "max_total_years": max_years,
+        },
+        "min_degree": min_degree,
+        "education_constraints": {
+            "min_degree": min_degree,
+            "prefer_degrees": [],
+            "required_majors": [],
+            "preferred_majors": [],
+            "languages": [],
+            "certifications": [],
+            "age_range": None,
+            "other": [],
+        },
+        "tags": _build_standard_tags(skills, general_tags=topic_tags),
+        "source": "niuke",
+        "_detail_url": record.get("_detail_url"),
+        "_category": record.get("_category"),
+        "_has_salary": record.get("_has_salary"),
+        "_has_valid_jd": record.get("_has_valid_jd"),
+    }
+
+
+def _map_zhaopin_json_record(record: dict[str, Any]) -> dict[str, Any]:
+    title = _clean_text(record.get("job_name")) or "Untitled Role"
+    description = _clean_text(record.get("jd"))
+    salary_text = _clean_text(record.get("salary"))
+    city = _clean_text(record.get("city"))
+    work_address = _clean_text(record.get("work_address"))
+    location = work_address or city
+    company = _clean_text(record.get("company")) or "Company Pending"
+    skill_tags = _string_list(record.get("skill_tags") or [])
+    industry_tags = _split_delimited_text(record.get("company_industry"))
+    context_text = _build_text_blob(
+        [
+            title,
+            salary_text,
+            city,
+            work_address,
+            record.get("education"),
+            record.get("experience"),
+            description,
+            record.get("company_industry"),
+            *skill_tags,
+        ]
+    )
+    extracted_skills = _extract_skills(context_text)
+    tagged_skills = [tag for tag in skill_tags if _looks_like_skill_label(tag)]
+    skills = _string_list([*extracted_skills, *tagged_skills])
+    general_tags = [tag for tag in skill_tags if tag not in skills]
+    salary_fields = _parse_salary_text(salary_text)
+    min_years, max_years = _parse_experience_text(record.get("experience"))
+    min_degree = _normalize_degree(record.get("education")) or _extract_min_degree_from_text(context_text)
+
+    return {
+        "id": _extract_job_id(record) or _clean_text(record.get("_detail_url")),
+        "job_name": record.get("job_name"),
+        "title": title,
+        "company": company,
+        "location": location,
+        "salary": salary_text,
+        "salary_currency": salary_fields["currency"],
+        "salary_negotiable": salary_fields["salary_negotiable"],
+        "salary_min": salary_fields["salary_min"],
+        "salary_max": salary_fields["salary_max"],
+        "salary_months_min": salary_fields["salary_months_min"],
+        "salary_months_max": salary_fields["salary_months_max"],
+        "summary": description or title,
+        "description": description,
+        "raw_text": context_text,
+        "responsibilities": [],
+        "highlights": [],
+        "skills": skills,
+        "skill_requirements": {
+            "required": [{"name": skill} for skill in skills[:3]],
+            "optional_groups": [],
+            "bonus": [
+                {"name": skill, "weight": max(5 - index, 1)}
+                for index, skill in enumerate(skills[3:8])
+            ],
+        },
+        "experience_years": min_years,
+        "experience_requirements": {
+            "core": [],
+            "bonus": [],
+            "min_total_years": min_years,
+            "max_total_years": max_years,
+        },
+        "min_degree": min_degree,
+        "education_constraints": {
+            "min_degree": min_degree,
+            "prefer_degrees": [],
+            "required_majors": [],
+            "preferred_majors": [],
+            "languages": [],
+            "certifications": [],
+            "age_range": None,
+            "other": [],
+        },
+        "tags": _build_standard_tags(skills, general_tags=general_tags, industry_tags=industry_tags),
+        "source": "zhaopin",
+        "company_type": record.get("company_type"),
+        "company_size": record.get("company_size"),
+        "company_industry": record.get("company_industry"),
+        "_detail_url": record.get("_detail_url"),
+        "_category": record.get("_category"),
+        "_has_salary": record.get("_has_salary"),
+        "_has_valid_jd": record.get("_has_valid_jd"),
+    }
 
 
 def _iter_pageflux_sql_records(path: Path, limit: int | None):
@@ -360,6 +559,181 @@ def _map_pageflux_row_to_job_payload(row: dict[str, Any]) -> dict[str, Any]:
         "tags": tags,
         "source": row.get("source"),
     }
+
+
+def _extract_job_id(record: dict[str, Any]) -> str | None:
+    explicit_id = _clean_text(record.get("id")) or _clean_text(record.get("job_id"))
+    if explicit_id:
+        return explicit_id
+    detail_url = _clean_text(record.get("_detail_url"))
+    if not detail_url:
+        return None
+    match = re.search(r"/(\d+)(?:\D*$|$)", detail_url)
+    if match:
+        return match.group(1)
+    return detail_url
+
+
+def _parse_embedded_jd(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    text = _clean_text(value)
+    if not text:
+        return {}
+    if not text.startswith("{"):
+        return {"text": text}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {"text": text}
+    return payload if isinstance(payload, dict) else {"text": text}
+
+
+def _build_text_blob(values: list[Any]) -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _clean_text(value)
+        if not text:
+            continue
+        marker = text.lower()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        parts.append(text)
+    return "\n".join(parts)
+
+
+def _split_delimited_text(value: Any) -> list[str]:
+    text = _clean_text(value)
+    if not text:
+        return []
+    items = re.split(r"[,，/|、;；]+", text)
+    return _string_list(items)
+
+
+def _build_standard_tags(
+    skills: list[str],
+    *,
+    general_tags: list[str] | None = None,
+    industry_tags: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    tags: list[dict[str, Any]] = [
+        {"name": skill, "category": "tech", "weight": 5 if index < 3 else 4}
+        for index, skill in enumerate(skills[:8])
+    ]
+    tags.extend(
+        {"name": tag, "category": "general", "weight": 3}
+        for tag in (general_tags or [])[:6]
+        if _clean_text(tag)
+    )
+    tags.extend(
+        {"name": tag, "category": "industry", "weight": 3}
+        for tag in (industry_tags or [])[:6]
+        if _clean_text(tag)
+    )
+    return tags
+
+
+def _looks_like_skill_label(value: str) -> bool:
+    normalized = value.strip()
+    if not normalized:
+        return False
+    if _extract_skills(normalized):
+        return True
+    lowered = normalized.lower()
+    return lowered in {
+        "小程序",
+        "微信小程序",
+        "uniapp",
+        "flutter",
+        "webgl",
+    }
+
+
+def _parse_experience_text(value: Any) -> tuple[float | None, float | None]:
+    text = _clean_text(value)
+    if not text:
+        return None, None
+
+    range_match = re.search(r"(\d+(?:\.\d+)?)\s*[-~～至到]\s*(\d+(?:\.\d+)?)\s*年", text)
+    if range_match:
+        return float(range_match.group(1)), float(range_match.group(2))
+
+    min_match = re.search(r"(\d+(?:\.\d+)?)\s*年\s*(?:以上|及以上|\+|起)", text)
+    if min_match:
+        return float(min_match.group(1)), None
+
+    exact_match = re.search(r"(\d+(?:\.\d+)?)\s*年", text)
+    if exact_match:
+        value = float(exact_match.group(1))
+        return value, value
+
+    if "应届" in text or "经验不限" in text:
+        return 0.0, None
+    return None, None
+
+
+def _parse_salary_text(value: Any) -> dict[str, Any]:
+    text = _clean_text(value)
+    result = {
+        "salary_negotiable": True if text and "面议" in text else None,
+        "salary_min": None,
+        "salary_max": None,
+        "salary_months_min": None,
+        "salary_months_max": None,
+        "currency": "CNY",
+    }
+    if not text:
+        return result
+
+    months_match = re.search(r"(\d{1,2})(?:\s*[-~～至到]\s*(\d{1,2}))?\s*薪", text)
+    if months_match:
+        left = int(months_match.group(1))
+        right = int(months_match.group(2) or months_match.group(1))
+        result["salary_months_min"] = left
+        result["salary_months_max"] = right
+
+    monthly_k = re.search(
+        r"(\d+(?:\.\d+)?)\s*[kK千]?\s*[-~～至到]\s*(\d+(?:\.\d+)?)\s*[kK千]",
+        text,
+    )
+    if monthly_k:
+        result["salary_min"] = int(round(float(monthly_k.group(1)) * 1000))
+        result["salary_max"] = int(round(float(monthly_k.group(2)) * 1000))
+        result["salary_negotiable"] = False
+        return result
+
+    monthly_plain = re.search(r"(\d{4,6})\s*[-~～至到]\s*(\d{4,6})\s*(?:元/月|元|/月)?", text)
+    if monthly_plain:
+        result["salary_min"] = int(monthly_plain.group(1))
+        result["salary_max"] = int(monthly_plain.group(2))
+        result["salary_negotiable"] = False
+        return result
+
+    monthly_wan = re.search(r"(\d+(?:\.\d+)?)\s*[-~～至到]\s*(\d+(?:\.\d+)?)\s*万", text)
+    if monthly_wan:
+        result["salary_min"] = int(round(float(monthly_wan.group(1)) * 10000))
+        result["salary_max"] = int(round(float(monthly_wan.group(2)) * 10000))
+        result["salary_negotiable"] = False
+        return result
+
+    yearly_wan = re.search(r"(\d+(?:\.\d+)?)\s*[-~～至到]\s*(\d+(?:\.\d+)?)\s*[万wW]\s*/?\s*年", text)
+    if yearly_wan:
+        result["salary_min"] = int(round(float(yearly_wan.group(1)) * 10000 / 12))
+        result["salary_max"] = int(round(float(yearly_wan.group(2)) * 10000 / 12))
+        result["salary_negotiable"] = False
+    return result
+
+
+def _extract_min_degree_from_text(text: Any) -> str | None:
+    normalized = _clean_text(text)
+    if not normalized:
+        return None
+    for token in ("博士", "phd", "doctor", "硕士", "master", "mba", "本科", "学士", "大专", "专科", "高中"):
+        if token.lower() in normalized.lower() or token in normalized:
+            return _normalize_degree(token)
+    return None
 
 
 def _compose_summary(summary: Any, description: Any, title: str) -> str:
