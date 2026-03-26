@@ -1,28 +1,44 @@
-﻿import type { Route } from "next";
+import type { Route } from "next";
 import Link from "next/link";
 
+import { RadarPlaceholder } from "@/components/charts/radar-placeholder";
 import { PageEventLogger } from "@/components/logging/page-event-logger";
 import { AppShell } from "@/components/layout/app-shell";
 import { ScorePill } from "@/components/sections/score-pill";
 import { SectionCard } from "@/components/sections/section-card";
-import { getMatchOverview, getResumePreview } from "@/lib/api";
+import { getGapReport, getMatchOverview, getResumePreview } from "@/lib/api";
 import type {
   BonusExperience,
   BonusSkill,
   CoreExperience,
+  GapReport,
   JobProfile,
   LanguageRequirement,
   MatchResult,
   OptionalSkillGroup,
   RequiredSkill,
   ResumeProfile,
+  ResumeWorkExperience,
 } from "@/types/domain";
 
 const PAGE_SIZE = 8;
+const EMPTY_GAP_REPORT: GapReport = {
+  baselineRoles: [],
+  missingSkills: [],
+  salaryGap: 0,
+  experienceGapYears: 0,
+  insights: [],
+};
+const FRONTEND_SKILLS = new Set(["vue", "react", "javascript", "typescript", "uniapp", "html", "css"]);
+const BACKEND_SKILLS = new Set(["php", "laravel", "java", "python", "golang", "node.js", "mysql", "postgresql"]);
+const MOBILE_SKILLS = new Set(["flutter", "android", "ios", "uniapp", "react native"]);
 const PLACEHOLDER_VALUES = new Set([
   "skill pending",
   "optional skills",
   "experience pending",
+  "role pending",
+  "project pending",
+  "school pending",
   "tag pending",
   "language pending",
   "job description pending.",
@@ -84,12 +100,215 @@ function uniqueMeaningfulValues(values: Array<string | null | undefined>): strin
   return results;
 }
 
+function briefText(text: string, limit: number = 500): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit - 1)}…`;
+}
+
+function sanitizeResumeText(text: string): string {
+  return text
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "")
+    .replace(/\b\d{11}\b/g, "")
+    .replace(/联系方式[:：]?\s*/g, "")
+    .replace(/社交主页[:：]?\s*/g, "")
+    .replace(/QQ[:：]?\s*\d+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeRawResumeDump(text: string): boolean {
+  return /联系方式|社交主页|求职意向|期望城市|出生|邮箱|电话|QQ|微信|http|www\./i.test(text);
+}
+
+function extractResumeField(rawText: string | undefined, labels: string[]): string | null {
+  if (!isMeaningfulText(rawText)) {
+    return null;
+  }
+
+  for (const label of labels) {
+    const pattern = new RegExp(`${label}\\s*[：:]\\s*([^\\n|]+)`, "i");
+    const match = rawText.match(pattern);
+    const value = match?.[1]?.trim();
+    if (isMeaningfulText(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function buildStructuredResumeSummary(resume: ResumeProfile): string {
+  const intent =
+    extractResumeField(resume.rawText, ["求职意向", "期望岗位", "应聘岗位"]) ??
+    resume.basicInfo.currentTitle;
+  const expectedCity =
+    extractResumeField(resume.rawText, ["期望城市", "意向城市"]) ??
+    resume.basicInfo.currentCity;
+  const skillNames = getResumeSkillNames(resume).slice(0, 5);
+  const projects = getResumeProjects(resume).slice(0, 2);
+  const summaryParts: string[] = [];
+
+  if (resume.basicInfo.workYears != null && resume.basicInfo.workYears > 0) {
+    summaryParts.push(`${resume.basicInfo.workYears}年工作经验`);
+  }
+  if (isMeaningfulText(intent)) {
+    summaryParts.push(`求职方向为${intent}`);
+  }
+  if (isMeaningfulText(expectedCity)) {
+    summaryParts.push(`关注城市为${expectedCity}`);
+  }
+  if (skillNames.length > 0) {
+    summaryParts.push(`技术栈涵盖${skillNames.join("、")}`);
+  }
+  if (projects.length > 0) {
+    summaryParts.push(`代表项目包括${projects.join("、")}`);
+  }
+
+  if (summaryParts.length > 0) {
+    return `${summaryParts.join("，")}。`;
+  }
+
+  return "简历已完成结构化解析，但当前缺少可直接展示的摘要信息。";
+}
+
 function getResumeSummary(resume: ResumeProfile): string {
-  return resume.basicInfo.summary ?? resume.basicInfo.selfEvaluation ?? "暂无简历摘要。";
+  const summaryCandidates = [
+    resume.basicInfo.summary,
+    resume.basicInfo.selfEvaluation,
+  ];
+
+  for (const candidate of summaryCandidates) {
+    if (isMeaningfulText(candidate)) {
+      if (looksLikeRawResumeDump(candidate)) {
+        continue;
+      }
+      const sanitized = sanitizeResumeText(candidate);
+      if (isMeaningfulText(sanitized)) {
+        return briefText(sanitized);
+      }
+    }
+  }
+
+  if (isMeaningfulText(resume.rawText)) {
+    const sanitizedRawText = sanitizeResumeText(resume.rawText);
+    if (
+      isMeaningfulText(sanitizedRawText) &&
+      !/求职意向|联系方式|社交主页|http|www\.|@/i.test(sanitizedRawText.slice(0, 120))
+    ) {
+      return briefText(sanitizedRawText);
+    }
+  }
+
+  return buildStructuredResumeSummary(resume);
 }
 
 function getResumeSkillNames(resume: ResumeProfile): string[] {
   return uniqueMeaningfulValues(resume.skills.map((skill) => skill.name));
+}
+
+function getResumeDegree(resume: ResumeProfile): string | null {
+  const degrees = uniqueMeaningfulValues([
+    resume.basicInfo.firstDegree,
+    ...resume.educations.map((education) => education.degree),
+  ]);
+  return degrees[0] ?? null;
+}
+
+function getResumeProjects(resume: ResumeProfile): string[] {
+  return uniqueMeaningfulValues(resume.projects.map((project) => project.name));
+}
+
+function inferExperienceHeadline(experience: ResumeWorkExperience): string | null {
+  const techStack = uniqueMeaningfulValues(experience.techStack ?? []).map((item) => item.toLowerCase());
+  const responsibilityText = uniqueMeaningfulValues([
+    ...(experience.responsibilities ?? []),
+    ...(experience.achievements ?? []),
+  ]).join(" ").toLowerCase();
+
+  const hasFrontend = techStack.some((skill) => FRONTEND_SKILLS.has(skill)) || /前端|h5|小程序|web/.test(responsibilityText);
+  const hasBackend = techStack.some((skill) => BACKEND_SKILLS.has(skill)) || /后端|接口|服务端|管理后台/.test(responsibilityText);
+  const hasMobile = techStack.some((skill) => MOBILE_SKILLS.has(skill)) || /app|客户端|移动端/.test(responsibilityText);
+
+  if ((hasFrontend && hasBackend) || (hasFrontend && hasMobile) || (hasBackend && hasMobile)) {
+    return "全栈开发经历";
+  }
+  if (hasFrontend) {
+    return "前端开发经历";
+  }
+  if (hasBackend) {
+    return "后端开发经历";
+  }
+  if (hasMobile) {
+    return "移动端开发经历";
+  }
+
+  const firstResponsibility = uniqueMeaningfulValues(experience.responsibilities ?? [])[0];
+  if (isMeaningfulText(firstResponsibility)) {
+    return briefText(firstResponsibility, 24);
+  }
+
+  return null;
+}
+
+function getResumeExperienceHeadline(experience: ResumeWorkExperience): string {
+  if (isMeaningfulText(experience.title)) {
+    return experience.title;
+  }
+  if (isMeaningfulText(experience.companyName)) {
+    return experience.companyName;
+  }
+  return inferExperienceHeadline(experience) ?? "开发经历";
+}
+
+function getResumeExperienceMeta(experience: ResumeWorkExperience): string | null {
+  const values = uniqueMeaningfulValues([
+    isMeaningfulText(experience.title) ? experience.companyName : experience.industry,
+    experience.location,
+    experience.level,
+  ]);
+  return values[0] ?? null;
+}
+
+function getResumeExperienceNote(experience: ResumeWorkExperience): string | null {
+  const firstBullet = uniqueMeaningfulValues([
+    ...(experience.responsibilities ?? []),
+    ...(experience.achievements ?? []),
+  ])[0];
+  if (isMeaningfulText(firstBullet)) {
+    return briefText(firstBullet, 80);
+  }
+
+  const techStack = uniqueMeaningfulValues(experience.techStack ?? []).slice(0, 4);
+  if (techStack.length > 0) {
+    return `技术栈：${techStack.join(" / ")}`;
+  }
+
+  return null;
+}
+
+function formatSourceContentType(contentType?: string | null): string | null {
+  if (!isMeaningfulText(contentType)) {
+    return null;
+  }
+
+  const normalized = contentType.toLowerCase();
+  if (normalized.includes("pdf")) {
+    return "PDF";
+  }
+  if (normalized.includes("word") || normalized.includes("docx")) {
+    return "DOCX";
+  }
+  if (normalized.includes("markdown")) {
+    return "Markdown";
+  }
+  if (normalized.startsWith("text/")) {
+    return "文本";
+  }
+  return contentType;
 }
 
 function getJobSummary(job: JobProfile): string {
@@ -200,6 +419,22 @@ function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatTier(tier: string): { label: string; className: string } {
+  switch (tier) {
+    case "reach":
+      return { label: "冲", className: "tier-badge tier-reach" };
+    case "safety":
+      return { label: "保", className: "tier-badge tier-safety" };
+    case "match":
+    default:
+      return { label: "稳", className: "tier-badge tier-match" };
+  }
+}
+
+function clamp(value: number, minValue: number = 0, maxValue: number = 1): number {
+  return Math.min(maxValue, Math.max(minValue, value));
+}
+
 function getFilteredMatchedSkills(match: MatchResult): string[] {
   return uniqueMeaningfulValues(match.matchedSkills);
 }
@@ -208,15 +443,57 @@ function getFilteredMissingSkills(match: MatchResult): string[] {
   return uniqueMeaningfulValues(match.missingSkills);
 }
 
+function getGapBaselineRoles(matches: MatchResult[], report: GapReport): string[] {
+  const baselineRoles = uniqueMeaningfulValues(report.baselineRoles);
+  if (baselineRoles.length > 0) {
+    return baselineRoles;
+  }
+  return uniqueMeaningfulValues(matches.slice(0, 3).map((match) => match.job.basicInfo.title));
+}
+
+function buildGapRadarValues(leadMatch: MatchResult | null, report: GapReport) {
+  const missingSkillPenalty = Math.min(report.missingSkills.length, 8) / 8;
+  const skills = leadMatch
+    ? Math.max(leadMatch.breakdown.skillMatch, 1 - missingSkillPenalty * 0.85)
+    : 1 - missingSkillPenalty * 0.85;
+  const experience = leadMatch
+    ? leadMatch.breakdown.experienceMatch
+    : report.experienceGapYears > 0
+      ? 0.45
+      : 0.72;
+  const salary = leadMatch
+    ? leadMatch.breakdown.salaryMatch
+    : report.salaryGap > 0
+      ? 0.4
+      : 0.75;
+  const growth = clamp(
+    0.35 +
+      Math.min(report.missingSkills.length, 5) * 0.08 +
+      (report.experienceGapYears > 0 ? 0.1 : 0) +
+      (report.salaryGap > 0 ? 0.05 : 0),
+    0.3,
+    0.95,
+  );
+
+  return {
+    skills: clamp(skills, 0.2, 1),
+    experience: clamp(experience, 0.2, 1),
+    salary: clamp(salary, 0.2, 1),
+    growth,
+  };
+}
+
 export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const resolvedSearchParams = (await searchParams) ?? {};
   const resumeId = normalizeParam(resolvedSearchParams.resumeId);
   const currentPage = normalizePositiveInt(normalizeParam(resolvedSearchParams.page), 1);
   const requestedTopK = currentPage * PAGE_SIZE + 1;
+  const shouldLoadGapReport = currentPage === 1;
 
-  const [resume, matches] = await Promise.all([
+  const [resume, matches, gapReport] = await Promise.all([
     getResumePreview(resumeId),
     getMatchOverview(resumeId, requestedTopK),
+    shouldLoadGapReport ? getGapReport(resumeId) : Promise.resolve(EMPTY_GAP_REPORT),
   ]);
 
   const offset = (currentPage - 1) * PAGE_SIZE;
@@ -225,8 +502,16 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const hasPrevPage = currentPage > 1;
   const visibleStart = pageMatches.length > 0 ? offset + 1 : 0;
   const visibleEnd = pageMatches.length > 0 ? offset + pageMatches.length : 0;
+  const leadMatch = matches[0] ?? null;
   const resumeSkills = resume ? getResumeSkillNames(resume) : [];
+  const resumeDegree = resume ? getResumeDegree(resume) : null;
+  const resumeProjects = resume ? getResumeProjects(resume) : [];
   const resumeSummary = resume ? getResumeSummary(resume) : "";
+  const sourceTypeLabel = resume ? formatSourceContentType(resume.sourceContentType) : null;
+  const gapBaselineRoles = getGapBaselineRoles(matches, gapReport);
+  const gapRadarValues = buildGapRadarValues(leadMatch, gapReport);
+  const hasGapContent =
+    gapBaselineRoles.length > 0 || gapReport.missingSkills.length > 0 || gapReport.insights.length > 0;
 
   return (
     <AppShell activePath="/matches">
@@ -246,20 +531,124 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
       <SectionCard title="简历概览" description="展示当前简历的核心信息。">
         {resume ? (
           <div className="resume-overview">
-            <div>
-              <p className="eyebrow">当前简历</p>
-              <h3>{resume.basicInfo.name}</h3>
-              <p>{resumeSummary}</p>
-              {resume.basicInfo.currentTitle ? <p>当前职位：{resume.basicInfo.currentTitle}</p> : null}
-              {resume.basicInfo.currentCity ? <p>所在城市：{resume.basicInfo.currentCity}</p> : null}
-              {resume.sourceFileName ? <p>文件名：{resume.sourceFileName}</p> : null}
+            <div className="resume-header">
+              <div>
+                <p className="eyebrow">当前简历</p>
+                <h3>{resume.basicInfo.name}</h3>
+                {isMeaningfulText(resume.basicInfo.currentTitle) ? (
+                  <p className="resume-title">{resume.basicInfo.currentTitle}</p>
+                ) : null}
+              </div>
             </div>
+
+            <div className="resume-meta-grid">
+              {isMeaningfulText(resume.basicInfo.currentCity) ? (
+                <div className="resume-meta-item">
+                  <span>所在城市</span>
+                  <strong>{resume.basicInfo.currentCity}</strong>
+                </div>
+              ) : null}
+              {resume.basicInfo.workYears != null && resume.basicInfo.workYears > 0 ? (
+                <div className="resume-meta-item">
+                  <span>工作年限</span>
+                  <strong>{resume.basicInfo.workYears} 年</strong>
+                </div>
+              ) : null}
+              {isMeaningfulText(resume.basicInfo.currentCompany) ? (
+                <div className="resume-meta-item">
+                  <span>当前公司</span>
+                  <strong>{resume.basicInfo.currentCompany}</strong>
+                </div>
+              ) : null}
+              {resume.expectedSalary && (resume.expectedSalary.min > 1000 || resume.expectedSalary.max > 1000) ? (
+                <div className="resume-meta-item">
+                  <span>期望薪资</span>
+                  <strong>
+                    {resume.expectedSalary.min === resume.expectedSalary.max
+                      ? `${resume.expectedSalary.min} ${resume.expectedSalary.currency ?? "CNY"}`
+                      : `${resume.expectedSalary.min}-${resume.expectedSalary.max} ${resume.expectedSalary.currency ?? "CNY"}`}
+                  </strong>
+                </div>
+              ) : null}
+              {isMeaningfulText(resumeDegree) ? (
+                <div className="resume-meta-item">
+                  <span>学历</span>
+                  <strong>{resumeDegree}</strong>
+                </div>
+              ) : null}
+              {isMeaningfulText(resume.sourceFileName) ? (
+                <div className="resume-meta-item">
+                  <span>源文件</span>
+                  <strong>{resume.sourceFileName}</strong>
+                </div>
+              ) : null}
+              {isMeaningfulText(sourceTypeLabel) ? (
+                <div className="resume-meta-item">
+                  <span>文件类型</span>
+                  <strong>{sourceTypeLabel}</strong>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="resume-summary-card">
+              <h4>简历摘要</h4>
+              <p>{resumeSummary}</p>
+            </div>
+
+            {resume.workExperiences.length > 0 ? (
+              <div className="resume-experiences">
+                <h4>工作经历</h4>
+                <div className="resume-experience-list">
+                  {resume.workExperiences.slice(0, 3).map((exp, i) => {
+                    const headline = getResumeExperienceHeadline(exp);
+                    const meta = getResumeExperienceMeta(exp);
+                    const note = getResumeExperienceNote(exp);
+
+                    return (
+                      <div key={i} className="resume-experience-item">
+                        <div className="resume-experience-header">
+                          <strong>{headline}</strong>
+                          {meta ? <span className="muted">{meta}</span> : null}
+                        </div>
+                        {(isMeaningfulText(exp.startDate) || isMeaningfulText(exp.endDate)) ? (
+                          <p className="muted resume-experience-date">
+                            {exp.startDate ?? ""} — {exp.endDate ?? "至今"}
+                          </p>
+                        ) : null}
+                        {note ? <p className="resume-experience-note">{note}</p> : null}
+                      </div>
+                    );
+                  })}
+                  {resume.workExperiences.length > 3 ? (
+                    <p className="muted">还有 {resume.workExperiences.length - 3} 段工作经历</p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {resumeProjects.length > 0 ? (
+              <div className="resume-projects">
+                <h4>重点项目</h4>
+                <div className="job-chip-row">
+                  {resumeProjects.slice(0, 6).map((project) => (
+                    <span key={project} className="tag">
+                      {project}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div className="tag-row">
-              {resumeSkills.map((skill) => (
-                <span key={skill} className="tag">
-                  {skill}
-                </span>
-              ))}
+              {resumeSkills.length > 0 ? (
+                resumeSkills.map((skill) => (
+                  <span key={skill} className="tag">
+                    {skill}
+                  </span>
+                ))
+              ) : (
+                <p className="muted">当前简历暂无可展示的结构化技能标签。</p>
+              )}
             </div>
           </div>
         ) : (
@@ -268,6 +657,97 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
             <Link href="/resume" className="primary-link">
               去上传简历
             </Link>
+          </div>
+        )}
+      </SectionCard>
+
+      <SectionCard title="差距分析" description="结合当前匹配结果，总结技能、经验和薪资上的差距。">
+        {currentPage > 1 ? (
+          <div className="empty-state">
+            <p>差距分析基于首页的 Top 匹配岗位生成。当前正在浏览分页结果，请返回第一页查看完整分析。</p>
+            <Link href={buildMatchesHref(resumeId, 1)} className="primary-link">
+              返回第一页
+            </Link>
+          </div>
+        ) : resume && hasGapContent ? (
+          <div className="gap-layout">
+            <div className="gap-visual">
+              <RadarPlaceholder values={gapRadarValues} />
+              <div className="gap-stat-grid">
+                <article className="gap-stat-card">
+                  <span>对照岗位</span>
+                  <strong>{gapBaselineRoles.length}</strong>
+                </article>
+                <article className="gap-stat-card">
+                  <span>待补技能</span>
+                  <strong>{gapReport.missingSkills.length}</strong>
+                </article>
+                <article className="gap-stat-card">
+                  <span>经验差距</span>
+                  <strong>{gapReport.experienceGapYears} 年</strong>
+                </article>
+                <article className="gap-stat-card">
+                  <span>薪资差距</span>
+                  <strong>{gapReport.salaryGap > 0 ? `${gapReport.salaryGap} 元/月` : "已覆盖"}</strong>
+                </article>
+              </div>
+            </div>
+
+            <div className="gap-stack">
+              <div className="job-subsection">
+                <h5>对照岗位</h5>
+                {gapBaselineRoles.length > 0 ? (
+                  <div className="job-chip-row">
+                    {gapBaselineRoles.map((role) => (
+                      <span key={role} className="tag">
+                        {role}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p>当前暂无可展示的对照岗位。</p>
+                )}
+              </div>
+
+              <div className="job-subsection">
+                <h5>待补技能</h5>
+                {gapReport.missingSkills.length > 0 ? (
+                  <div className="job-chip-row">
+                    {gapReport.missingSkills.map((skill) => (
+                      <span key={skill} className="tag">
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p>当前简历与对照岗位之间暂无明显技能缺口。</p>
+                )}
+              </div>
+
+              <div className="insight-list">
+                {gapReport.insights.length > 0 ? (
+                  gapReport.insights.map((insight) => (
+                    <article key={insight.dimension} className="insight-card">
+                      <p className="eyebrow">{insight.dimension}</p>
+                      <h4>{insight.currentState}</h4>
+                      <p>{insight.targetState}</p>
+                      <strong>{insight.suggestion}</strong>
+                    </article>
+                  ))
+                ) : (
+                  <article className="insight-card">
+                    <p className="eyebrow">系统提示</p>
+                    <h4>Gap 报告暂未生成完整洞察</h4>
+                    <p>后端已经返回了匹配结果，但当前没有拿到可展示的结构化建议。</p>
+                    <strong>可以先参考上方待补技能和推荐岗位要求继续完善简历。</strong>
+                  </article>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <p>当前还没有足够的匹配结果来生成差距分析。请先上传简历，或确认岗位库已经完成导入。</p>
           </div>
         )}
       </SectionCard>
@@ -332,6 +812,10 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                       <div className="job-card-score">
                         <span>综合匹配</span>
                         <strong>{formatPercent(match.breakdown.total)}</strong>
+                        {(() => {
+                          const tier = formatTier(match.tier);
+                          return <span className={tier.className}>{tier.label}</span>;
+                        })()}
                       </div>
                     </div>
                     <p className="job-card-summary-text">{getJobSummary(match.job)}</p>
@@ -641,5 +1125,3 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
     </AppShell>
   );
 }
-
-

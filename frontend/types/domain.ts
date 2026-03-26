@@ -209,6 +209,7 @@ export type MatchResult = {
   matchedSkills: string[];
   missingSkills: string[];
   reasoning: string;
+  tier: "reach" | "match" | "safety";
 };
 
 export type GapInsight = {
