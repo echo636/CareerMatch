@@ -118,12 +118,14 @@ class MatchingService:
             )
             matched_skills = [skill for skill in job.skills if self._normalize_skill(skill) in candidate_skill_index]
             missing_skills = [skill for skill in job.skills if self._normalize_skill(skill) not in candidate_skill_index]
+            tier = self._classify_tier(resume, job, breakdown)
             match = MatchResult(
                 job=job,
                 breakdown=breakdown,
                 matched_skills=matched_skills,
                 missing_skills=missing_skills,
                 reasoning=self._build_reasoning(job, matched_skills, missing_skills, breakdown),
+                tier=tier,
             )
             matches.append(match)
             candidate_logs.append(
@@ -133,6 +135,7 @@ class MatchingService:
                     "status": "matched",
                     "filter_reason": filter_reason,
                     "vector_similarity": round(candidate_score, 4),
+                    "tier": tier,
                     "breakdown": {
                         "vector_similarity": breakdown.vector_similarity,
                         "skill_match": breakdown.skill_match,
@@ -194,6 +197,51 @@ class MatchingService:
         if resume.expected_salary.min <= 0:
             return False
         return resume.expected_salary.min > job.salary_range.max * 1.5
+
+    def _classify_tier(
+        self,
+        resume: ResumeProfile,
+        job: JobProfile,
+        breakdown: MatchBreakdown,
+    ) -> str:
+        """Classify the match as reach/match/safety (冲/稳/保).
+
+        After ranking by non-salary match score, classify each job based on
+        how the job's salary compares to the candidate's expectation:
+          - 冲 (reach):  job pays significantly above expectations
+          - 稳 (match):  job salary roughly aligns with expectations
+          - 保 (safety): job pays at or below expectations
+        """
+        ratio = self._salary_aspiration_ratio(resume, job)
+
+        # No salary data on either side → default to 稳
+        if ratio == 1.0 and (
+            resume.expected_salary.min <= 0 or not job.has_salary_reference
+        ):
+            return "match"
+
+        if ratio >= 1.20:
+            return "reach"
+        if ratio <= 0.85:
+            return "safety"
+        return "match"
+
+    def _salary_aspiration_ratio(self, resume: ResumeProfile, job: JobProfile) -> float:
+        """How aspirational is the job's salary relative to the candidate's expectation.
+
+        Returns job_midpoint / resume_midpoint.  A ratio > 1 means the job pays
+        more than the candidate expects; < 1 means it pays less.
+        Returns 1.0 (neutral) when either side lacks salary data.
+        """
+        resume_mid = (resume.expected_salary.min + resume.expected_salary.max) / 2
+        if resume_mid <= 0:
+            return 1.0
+        if not job.has_salary_reference:
+            return 1.0
+        job_mid = (job.salary_range.min + job.salary_range.max) / 2
+        if job_mid <= 0:
+            return 1.0
+        return job_mid / resume_mid
 
     def _direction_mismatch(self, resume: ResumeProfile, job: JobProfile) -> bool:
         """Filter out jobs that have zero tag overlap with the resume when both sides
@@ -269,7 +317,7 @@ class MatchingService:
                     (skill_match, 0.35),
                     (experience_match, 0.25),
                     (education_match, 0.1 if self._has_education_constraints(job.education_constraints) else 0.0),
-                    (salary_match, 0.1 if job.has_salary_reference else 0.0),
+                    # Salary is NOT included in total; it is used for tier classification only.
                 ]
             ),
             4,

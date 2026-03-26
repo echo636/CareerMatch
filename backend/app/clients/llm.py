@@ -419,7 +419,7 @@ class QwenLLMClient(BaseLLMClient):
         expected_salary = self._as_dict(data.get("expected_salary"))
         name = self._clean_text(basic_info.get("name")) or Path(file_name).stem.replace("_", " ").strip() or "Unnamed Candidate"
         summary = self._clean_text(basic_info.get("summary")) or self._clean_text(basic_info.get("self_evaluation")) or raw_text.strip()[:500] or DEFAULT_RESUME_SUMMARY
-        salary_min, salary_max = self._ordered_int_pair(expected_salary.get("min"), expected_salary.get("max"), 25000, 35000)
+        salary_min, salary_max = self._ordered_int_pair(expected_salary.get("min"), expected_salary.get("max"), 0, 0)
         normalized_work_items = [
             self._normalize_resume_work(item) for item in self._as_list(data.get("work_experiences"))
         ]

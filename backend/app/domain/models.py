@@ -373,6 +373,7 @@ class MatchResult:
     matched_skills: list[str]
     missing_skills: list[str]
     reasoning: str
+    tier: str = "match"
 
 
 @dataclass(slots=True)
