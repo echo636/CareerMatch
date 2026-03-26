@@ -30,6 +30,58 @@ CURRENT_YEAR = datetime.now().year
 DEFAULT_QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_RESUME_SUMMARY = "Resume summary pending."
 DEFAULT_JOB_SUMMARY = "Job description pending."
+LLM_PLACEHOLDER_TEXTS = {
+    "company pending",
+    "role pending",
+    "project pending",
+    "school pending",
+    "skill pending",
+    "tag pending",
+    "language pending",
+    "resume summary pending.",
+    "job description pending.",
+    "untitled role",
+    "optional skills",
+    "experience pending",
+}
+RESUME_DATE_RANGE_PATTERN = re.compile(
+    r"(?P<start>\d{4}[./-]\d{1,2})\s*(?:[-~～—–至到]+\s*)(?P<end>至今|\d{4}[./-]\d{1,2})"
+)
+RESUME_SECTION_MARKERS = ("工作经历", "工作经验")
+RESUME_SECTION_END_MARKERS = ("项目经历", "项目经验", "教育经历", "教育背景", "技能", "自我评价")
+RESUME_COMPANY_SUFFIXES = (
+    "股份有限公司",
+    "有限责任公司",
+    "有限公司",
+    "集团",
+    "公司",
+    "工作室",
+    "研究院",
+    "银行",
+    "医院",
+    "学校",
+    "中心",
+    "机构",
+)
+RESUME_TITLE_KEYWORDS = (
+    "工程师",
+    "开发",
+    "主管",
+    "经理",
+    "负责人",
+    "合伙人",
+    "架构师",
+    "总监",
+    "leader",
+    "leader",
+    "director",
+    "manager",
+    "developer",
+    "engineer",
+    "architect",
+    "顾问",
+    "程序员",
+)
 
 logger = get_logger("clients.llm")
 
@@ -363,6 +415,14 @@ class QwenLLMClient(BaseLLMClient):
         name = self._clean_text(basic_info.get("name")) or Path(file_name).stem.replace("_", " ").strip() or "Unnamed Candidate"
         summary = self._clean_text(basic_info.get("summary")) or self._clean_text(basic_info.get("self_evaluation")) or raw_text.strip()[:200] or DEFAULT_RESUME_SUMMARY
         salary_min, salary_max = self._ordered_int_pair(expected_salary.get("min"), expected_salary.get("max"), 25000, 35000)
+        normalized_work_items = [
+            self._normalize_resume_work(item) for item in self._as_list(data.get("work_experiences"))
+        ]
+        work_experiences = self._merge_resume_work_experiences(
+            self._fill_resume_work_experiences_from_raw_text(normalized_work_items, raw_text),
+            self._infer_resume_work_experiences(raw_text),
+        )
+        latest_experience = work_experiences[0] if work_experiences else {}
         return {
             "id": resume_id,
             "is_resume": True,
@@ -372,8 +432,8 @@ class QwenLLMClient(BaseLLMClient):
                 "age": self._int_or_none(basic_info.get("age")),
                 "work_years": self._int_or_none(basic_info.get("work_years")),
                 "current_city": self._clean_text(basic_info.get("current_city")),
-                "current_title": self._clean_text(basic_info.get("current_title")),
-                "current_company": self._clean_text(basic_info.get("current_company")),
+                "current_title": self._clean_text(basic_info.get("current_title")) or self._clean_text(latest_experience.get("title")),
+                "current_company": self._clean_text(basic_info.get("current_company")) or self._clean_text(latest_experience.get("company_name")),
                 "status": self._clean_text(basic_info.get("status")),
                 "email": self._clean_text(basic_info.get("email")),
                 "phone": self._clean_text(basic_info.get("phone")),
@@ -391,7 +451,7 @@ class QwenLLMClient(BaseLLMClient):
                 "avatar": self._clean_text(basic_info.get("avatar")),
             },
             "educations": [self._normalize_resume_education(item) for item in self._as_list(data.get("educations"))],
-            "work_experiences": [self._normalize_resume_work(item) for item in self._as_list(data.get("work_experiences"))],
+            "work_experiences": work_experiences,
             "projects": [self._normalize_resume_project(item) for item in self._as_list(data.get("projects"))],
             "skills": [self._normalize_resume_skill(item) for item in self._as_list(data.get("skills"))],
             "tags": [self._normalize_resume_tag(item) for item in self._as_list(data.get("tags"))],
@@ -602,9 +662,9 @@ class QwenLLMClient(BaseLLMClient):
     def _normalize_resume_work(self, item: Any) -> dict[str, Any]:
         payload = self._as_dict(item)
         return {
-            "company_name": self._clean_text(payload.get("company_name")) or "Company Pending",
+            "company_name": self._clean_text(payload.get("company_name")) or "",
             "industry": self._clean_text(payload.get("industry")),
-            "title": self._clean_text(payload.get("title")) or "Role Pending",
+            "title": self._clean_text(payload.get("title")) or "",
             "level": self._clean_text(payload.get("level")),
             "location": self._clean_text(payload.get("location")),
             "start_date": self._clean_text(payload.get("start_date")),
@@ -613,6 +673,315 @@ class QwenLLMClient(BaseLLMClient):
             "achievements": self._string_list(payload.get("achievements")),
             "tech_stack": self._string_list(payload.get("tech_stack")),
         }
+
+    def _merge_resume_work_experiences(
+        self,
+        extracted_items: list[dict[str, Any]],
+        inferred_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not extracted_items:
+            return self._dedupe_resume_work_experiences(inferred_items)
+        if not inferred_items:
+            return self._dedupe_resume_work_experiences(extracted_items)
+
+        inferred_by_key = {
+            key: item for item in inferred_items if (key := self._resume_work_key(item))
+        }
+        merged: list[dict[str, Any]] = []
+
+        for index, item in enumerate(extracted_items):
+            key = self._resume_work_key(item)
+            fallback = inferred_by_key.get(key) if key else None
+            if (
+                fallback is None
+                and key is None
+                and not self._clean_text(item.get("title"))
+                and not self._clean_text(item.get("company_name"))
+                and index < len(inferred_items)
+            ):
+                fallback = inferred_items[index]
+
+            merged.append(self._merge_resume_work_item(item, fallback))
+
+        merged_keys = {self._resume_work_key(item) for item in merged if self._resume_work_key(item)}
+        for inferred in inferred_items:
+            inferred_key = self._resume_work_key(inferred)
+            if inferred_key and inferred_key in merged_keys:
+                continue
+            merged.append(inferred)
+
+        return self._dedupe_resume_work_experiences(merged)
+
+    def _fill_resume_work_experiences_from_raw_text(
+        self,
+        items: list[dict[str, Any]],
+        raw_text: str,
+    ) -> list[dict[str, Any]]:
+        if not items or not raw_text.strip():
+            return items
+
+        normalized_lines = [line.strip() for line in raw_text.replace("\r\n", "\n").splitlines() if line.strip()]
+        filled: list[dict[str, Any]] = []
+        for item in items:
+            allow_start_only = not self._clean_text(item.get("title")) and not self._clean_text(item.get("company_name"))
+            fallback = self._find_resume_work_item_from_lines(
+                normalized_lines,
+                self._clean_text(item.get("start_date")),
+                self._clean_text(item.get("end_date")),
+                allow_start_only=allow_start_only,
+            )
+            filled.append(self._merge_resume_work_item(item, fallback))
+        return self._dedupe_resume_work_experiences(filled)
+
+    def _merge_resume_work_item(
+        self,
+        primary: dict[str, Any],
+        fallback: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if fallback is None:
+            return primary
+        has_primary_identity = bool(
+            self._clean_text(primary.get("title")) or self._clean_text(primary.get("company_name"))
+        )
+        return {
+            "company_name": self._clean_text(primary.get("company_name")) or self._clean_text(fallback.get("company_name")) or "",
+            "industry": self._clean_text(primary.get("industry")) or self._clean_text(fallback.get("industry")),
+            "title": self._clean_text(primary.get("title")) or self._clean_text(fallback.get("title")) or "",
+            "level": self._clean_text(primary.get("level")) or self._clean_text(fallback.get("level")),
+            "location": self._clean_text(primary.get("location")) or self._clean_text(fallback.get("location")),
+            "start_date": (
+                self._clean_text(primary.get("start_date"))
+                if has_primary_identity
+                else None
+            ) or self._clean_text(fallback.get("start_date")) or self._clean_text(primary.get("start_date")),
+            "end_date": (
+                self._clean_text(primary.get("end_date"))
+                if has_primary_identity
+                else None
+            ) or self._clean_text(fallback.get("end_date")) or self._clean_text(primary.get("end_date")),
+            "responsibilities": self._string_list(primary.get("responsibilities")) or self._string_list(fallback.get("responsibilities")),
+            "achievements": self._string_list(primary.get("achievements")) or self._string_list(fallback.get("achievements")),
+            "tech_stack": self._string_list(primary.get("tech_stack")) or self._string_list(fallback.get("tech_stack")),
+        }
+
+    def _resume_work_key(self, item: dict[str, Any]) -> str | None:
+        start = self._normalize_resume_date_token(self._clean_text(item.get("start_date")))
+        end = self._normalize_resume_date_token(self._clean_text(item.get("end_date")))
+        if start or end:
+            return f"{start or ''}|{end or ''}"
+        return None
+
+    def _infer_resume_work_experiences(self, raw_text: str) -> list[dict[str, Any]]:
+        section_text = self._resume_work_section(raw_text)
+        if not section_text:
+            return []
+
+        inferred: list[dict[str, Any]] = []
+        for raw_line in section_text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = RESUME_DATE_RANGE_PATTERN.search(line)
+            if match is None:
+                continue
+
+            start_date = self._normalize_resume_date(match.group("start"))
+            end_date = self._normalize_resume_date(match.group("end"))
+            company_name, title = self._split_resume_company_title_from_line(line, match)
+            if not company_name and not title:
+                continue
+
+            inferred.append(
+                {
+                    "company_name": company_name or "",
+                    "industry": None,
+                    "title": title or "",
+                    "level": None,
+                    "location": None,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "responsibilities": [],
+                    "achievements": [],
+                    "tech_stack": [],
+                }
+            )
+
+        return inferred
+
+    def _find_resume_work_item_from_lines(
+        self,
+        lines: list[str],
+        start_date: str | None,
+        end_date: str | None,
+        allow_start_only: bool = False,
+    ) -> dict[str, Any] | None:
+        normalized_start = self._normalize_resume_date_token(start_date)
+        normalized_end = self._normalize_resume_date_token(end_date)
+        if not normalized_start:
+            return None
+
+        for line in lines:
+            match = RESUME_DATE_RANGE_PATTERN.search(line)
+            if match is None:
+                continue
+            matched_start = self._normalize_resume_date_token(match.group("start"))
+            matched_end = self._normalize_resume_date_token(match.group("end"))
+            if matched_start != normalized_start:
+                continue
+            if normalized_end and matched_end and normalized_end != matched_end:
+                if allow_start_only:
+                    pass
+                else:
+                    continue
+            if normalized_end and not matched_end and not allow_start_only:
+                continue
+
+            parsed_start = self._normalize_resume_date(match.group("start"))
+            parsed_end = self._normalize_resume_date(match.group("end"))
+            company_name, title = self._split_resume_company_title_from_line(line, match)
+            if not company_name and not title:
+                continue
+            return {
+                "company_name": company_name or "",
+                "industry": None,
+                "title": title or "",
+                "level": None,
+                "location": None,
+                "start_date": parsed_start,
+                "end_date": parsed_end,
+                "responsibilities": [],
+                "achievements": [],
+                "tech_stack": [],
+            }
+
+        return None
+
+    def _dedupe_resume_work_experiences(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        ordered_keys: list[str | None] = []
+        best_by_key: dict[str, dict[str, Any]] = {}
+        keyless_items: list[dict[str, Any]] = []
+
+        for item in items:
+            key = self._resume_work_key(item)
+            if key is None:
+                keyless_items.append(item)
+                continue
+            if key not in best_by_key:
+                ordered_keys.append(key)
+                best_by_key[key] = item
+                continue
+            if self._resume_work_item_score(item) > self._resume_work_item_score(best_by_key[key]):
+                best_by_key[key] = item
+
+        deduped = [best_by_key[key] for key in ordered_keys]
+        deduped.extend(keyless_items)
+        return deduped
+
+    def _resume_work_item_score(self, item: dict[str, Any]) -> int:
+        score = 0
+        if self._clean_text(item.get("company_name")):
+            score += 2
+        if self._clean_text(item.get("title")):
+            score += 2
+        if self._clean_text(item.get("industry")):
+            score += 1
+        if self._clean_text(item.get("location")):
+            score += 1
+        if self._string_list(item.get("responsibilities")):
+            score += 1
+        if self._string_list(item.get("achievements")):
+            score += 1
+        if self._string_list(item.get("tech_stack")):
+            score += 1
+        return score
+
+    def _resume_work_section(self, raw_text: str) -> str:
+        normalized_text = raw_text.replace("\r\n", "\n")
+        start_index = -1
+        for marker in RESUME_SECTION_MARKERS:
+            marker_index = normalized_text.find(marker)
+            if marker_index != -1:
+                start_index = marker_index + len(marker)
+                break
+        if start_index == -1:
+            return normalized_text
+
+        section = normalized_text[start_index:]
+        end_positions = [
+            position for marker in RESUME_SECTION_END_MARKERS if (position := section.find(marker)) != -1
+        ]
+        if end_positions:
+            section = section[: min(end_positions)]
+        return section.strip()
+
+    def _normalize_resume_date(self, value: str) -> str:
+        if value == "至今":
+            return value
+        match = re.match(r"(?P<year>\d{4})[./-](?P<month>\d{1,2})", value)
+        if match is None:
+            return value
+        year = match.group("year")
+        month = int(match.group("month"))
+        return f"{year}.{month:02d}"
+
+    def _normalize_resume_date_token(self, value: str | None) -> str | None:
+        cleaned = self._clean_text(value)
+        if not cleaned:
+            return None
+        if cleaned == "至今":
+            return cleaned
+        match = re.match(r"(?P<year>\d{4})[./-](?P<month>\d{1,2})", cleaned)
+        if match is None:
+            return cleaned
+        return f"{match.group('year')}.{int(match.group('month')):02d}"
+
+    def _split_resume_company_title_from_line(
+        self,
+        line: str,
+        match: re.Match[str],
+    ) -> tuple[str | None, str | None]:
+        before = line[: match.start()].strip(" ：:|/\\-—–")
+        after = line[match.end() :].strip(" ：:|/\\-—–")
+        if after:
+            company_name, title = self._split_resume_company_title(after)
+            if company_name or title:
+                return company_name, title
+        if before:
+            company_name, title = self._split_resume_company_title(before)
+            if company_name or title:
+                return company_name, title
+        combined = " ".join(part for part in [before, after] if part).strip()
+        if combined:
+            return self._split_resume_company_title(combined)
+        return None, None
+
+    def _split_resume_company_title(self, text: str) -> tuple[str | None, str | None]:
+        normalized = re.sub(r"\s+", " ", text).strip()
+        if not normalized:
+            return None, None
+
+        for suffix in RESUME_COMPANY_SUFFIXES:
+            pattern = re.compile(rf"^(?P<company>.+?{re.escape(suffix)})(?:\s+(?P<title>.+))?$")
+            match = pattern.match(normalized)
+            if match is None:
+                continue
+            company_name = self._clean_text(match.group("company"))
+            title = self._clean_text(match.group("title"))
+            return company_name, title
+
+        parts = normalized.split(" ")
+        if len(parts) >= 2:
+            trailing = parts[-1]
+            if self._looks_like_resume_title(trailing):
+                return self._clean_text(" ".join(parts[:-1])), self._clean_text(trailing)
+
+        if self._looks_like_resume_title(normalized):
+            return None, normalized
+        return normalized, None
+
+    def _looks_like_resume_title(self, value: str) -> bool:
+        lowered = value.lower()
+        return any(keyword in lowered for keyword in RESUME_TITLE_KEYWORDS)
 
     def _normalize_resume_project(self, item: Any) -> dict[str, Any]:
         payload = self._as_dict(item)
@@ -742,6 +1111,8 @@ class QwenLLMClient(BaseLLMClient):
         if value is None:
             return None
         text = str(value).strip()
+        if text.lower() in LLM_PLACEHOLDER_TEXTS:
+            return None
         return text or None
     def _string_list(self, value: Any) -> list[str]:
         source = value if isinstance(value, list) else []
@@ -817,7 +1188,3 @@ class QwenLLMClient(BaseLLMClient):
         if salary_min is not None and salary_max is not None and salary_min > salary_max:
             salary_min, salary_max = salary_max, salary_min
         return salary_min, salary_max
-
-
-
-

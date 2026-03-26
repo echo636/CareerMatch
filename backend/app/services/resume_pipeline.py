@@ -127,7 +127,15 @@ class ResumePipelineService:
 
     def get_resume(self, resume_id: str) -> ResumeProfile | None:
         resume = self.repository.get(resume_id)
-        logger.info("resume_pipeline.get resume_id=%s found=%s", resume_id, resume is not None)
+        repaired = False
+        if resume is not None:
+            repaired = self._repair_resume_work_experiences(resume)
+        logger.info(
+            "resume_pipeline.get resume_id=%s found=%s repaired=%s",
+            resume_id,
+            resume is not None,
+            repaired,
+        )
         return resume
 
     def _vector_payload(self, resume: ResumeProfile) -> str:
@@ -198,9 +206,9 @@ class ResumePipelineService:
 
     def _build_work_experience(self, payload: dict) -> ResumeWorkExperience:
         return ResumeWorkExperience(
-            company_name=str(payload.get("company_name") or "Company Pending"),
+            company_name=str(payload.get("company_name") or ""),
             industry=payload.get("industry"),
-            title=str(payload.get("title") or "Role Pending"),
+            title=str(payload.get("title") or ""),
             level=payload.get("level"),
             location=payload.get("location"),
             start_date=payload.get("start_date"),
@@ -234,3 +242,49 @@ class ResumePipelineService:
             name=str(payload.get("name") or "Tag Pending"),
             category=payload.get("category"),
         )
+
+    def _repair_resume_work_experiences(self, resume: ResumeProfile) -> bool:
+        infer_fn = getattr(self.llm_client, "_infer_resume_work_experiences", None)
+        merge_fn = getattr(self.llm_client, "_merge_resume_work_experiences", None)
+        fill_fn = getattr(self.llm_client, "_fill_resume_work_experiences_from_raw_text", None)
+        if not callable(infer_fn) or not callable(merge_fn) or not callable(fill_fn) or not resume.raw_text.strip():
+            return False
+
+        existing = [
+            {
+                "company_name": item.company_name,
+                "industry": item.industry,
+                "title": item.title,
+                "level": item.level,
+                "location": item.location,
+                "start_date": item.start_date,
+                "end_date": item.end_date,
+                "responsibilities": list(item.responsibilities or []),
+                "achievements": list(item.achievements or []),
+                "tech_stack": list(item.tech_stack or []),
+            }
+            for item in resume.work_experiences
+        ]
+        filled = fill_fn(existing, resume.raw_text)
+        inferred = infer_fn(resume.raw_text)
+        merged = merge_fn(filled, inferred)
+        latest = merged[0] if merged else {}
+        clean_text_fn = getattr(self.llm_client, "_clean_text", None)
+        current_title = clean_text_fn(resume.basic_info.current_title) if callable(clean_text_fn) else resume.basic_info.current_title
+        current_company = clean_text_fn(resume.basic_info.current_company) if callable(clean_text_fn) else resume.basic_info.current_company
+        next_current_title = current_title or latest.get("title")
+        next_current_company = current_company or latest.get("company_name")
+
+        changed = (
+            merged != existing
+            or next_current_title != resume.basic_info.current_title
+            or next_current_company != resume.basic_info.current_company
+        )
+        if not changed:
+            return False
+
+        resume.work_experiences = [self._build_work_experience(item) for item in merged]
+        resume.basic_info.current_title = next_current_title
+        resume.basic_info.current_company = next_current_company
+        self.repository.save(resume)
+        return True

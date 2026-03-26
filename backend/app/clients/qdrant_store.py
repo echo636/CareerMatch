@@ -27,14 +27,18 @@ class QdrantVectorStore(BaseVectorStore):
         if namespace in self._ensured_collections:
             return
         if not self._client.collection_exists(namespace):
-            self._client.create_collection(
-                collection_name=namespace,
-                vectors_config=VectorParams(
-                    size=self._dimensions,
-                    distance=Distance.COSINE,
-                ),
-            )
-            logger.info("Created Qdrant collection '%s' (dim=%d)", namespace, self._dimensions)
+            try:
+                self._client.create_collection(
+                    collection_name=namespace,
+                    vectors_config=VectorParams(
+                        size=self._dimensions,
+                        distance=Distance.COSINE,
+                    ),
+                )
+                logger.info("Created Qdrant collection '%s' (dim=%d)", namespace, self._dimensions)
+            except Exception:
+                if not self._client.collection_exists(namespace):
+                    raise
         self._ensured_collections.add(namespace)
 
     def get(self, namespace: str, item_id: str) -> StoredVector | None:
