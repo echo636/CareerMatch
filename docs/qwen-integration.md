@@ -27,7 +27,7 @@ QWEN_EMBEDDING_DIMENSIONS=1024
 1. Start the backend.
 2. Verify `GET /api/health` returns the expected Qwen models.
 3. Upload a real resume and confirm the response still contains `basicInfo`, `skills`, `projects`, and `expectedSalary`.
-4. Re-import jobs with `python backend/import_jobs_offline.py ...` so persisted job vectors are rebuilt with the real embedding model.
+4. Re-import jobs with `python backend/scripts/import_jobs_offline.py ...` so persisted job vectors are rebuilt with the real embedding model.
 5. Run `backend/test/test_job_normalization_compare.py` to compare raw job JSON with processed JSON and confirm the real APIs return stable output.
 
 ## Notes

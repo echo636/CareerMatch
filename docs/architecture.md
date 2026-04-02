@@ -22,8 +22,9 @@ CareerMatch/
 │   │   ├── repositories/
 │   │   └── services/
 │   ├── data/
+│   ├── scripts/
+│   │   └── import_jobs_offline.py
 │   ├── uploads/
-│   └── import_jobs_offline.py
 ├── docs/
 └── docker-compose.yml
 ```
@@ -42,7 +43,7 @@ CareerMatch/
 - `backend/app/clients/`：LLM、Embedding、向量存储、文档解析器和对象存储适配层。
 - `backend/app/repositories/`：使用 PostgreSQL（JSONB）持久化结构化简历和岗位数据。
 - `backend/app/domain/`：领域模型与序列化逻辑。
-- `backend/import_jobs_offline.py`：后台离线岗位导入脚本，直接完成结构化、embedding 和持久化。
+- `backend/scripts/import_jobs_offline.py`：后台离线岗位导入脚本，直接完成结构化、embedding 和持久化。
 
 ## 当前 API 接口
 

@@ -115,25 +115,25 @@ JOB_DATA_LIMIT=300
 导入通用 JSON：
 
 ```powershell
-python import_jobs_offline.py --input data\jobs.json --batch-size 50 --replace-jobs
+python scripts\import_jobs_offline.py --input data\jobs.json --batch-size 50 --replace-jobs
 ```
 
 导入牛客清洗后的 JSON：
 
 ```powershell
-python import_jobs_offline.py --input data\niuke_llm_cleaned.json --limit 200 --batch-size 50 --replace-jobs
+python scripts\import_jobs_offline.py --input data\niuke_llm_cleaned.json --limit 200 --batch-size 50 --replace-jobs
 ```
 
 导入智联清洗后的 JSON：
 
 ```powershell
-python import_jobs_offline.py --input data\zhaopin_llm_cleaned.json --limit 200 --batch-size 50 --replace-jobs
+python scripts\import_jobs_offline.py --input data\zhaopin_llm_cleaned.json --limit 200 --batch-size 50 --replace-jobs
 ```
 
 导入 SQL dump：
 
 ```powershell
-python import_jobs_offline.py --input data\pageflux_dev_jobs_2026-03-23_172811.sql --limit 300 --batch-size 50 --replace-jobs
+python scripts\import_jobs_offline.py --input data\pageflux_dev_jobs_2026-03-23_172811.sql --limit 300 --batch-size 50 --replace-jobs
 ```
 
 参数说明：
@@ -158,7 +158,7 @@ python import_jobs_offline.py --input data\pageflux_dev_jobs_2026-03-23_172811.s
 docker exec careermatch-postgres psql -U careermatch -d careermatch -c "select count(*) from jobs;"
 ```
 
-如果你是手动执行 `import_jobs_offline.py`，脚本结束时还会打印一段 JSON，总结：
+如果你是手动执行 `scripts\import_jobs_offline.py`，脚本结束时还会打印一段 JSON，总结：
 
 - 实际导入条数
 - PostgreSQL 连接信息

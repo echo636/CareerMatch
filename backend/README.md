@@ -22,7 +22,7 @@ QDRANT_URL=http://localhost:6333
 Behavior:
 
 - `/api/resumes/upload` parses the resume, computes its embedding once, then stores the structured resume in PostgreSQL and the vector in Qdrant.
-- `python import_jobs_offline.py` imports raw job data in the background, computes embeddings, and writes structured jobs to PostgreSQL and vectors to Qdrant.
+- `python scripts/import_jobs_offline.py` imports raw job data in the background, computes embeddings, and writes structured jobs to PostgreSQL and vectors to Qdrant.
 - Later requests reuse the stored vectors as long as the derived vector payload for that item has not changed.
 - If the resume or job content changes, the backend recomputes the embedding and updates the stored cache.
 - On startup, default seed jobs are only imported when the persistent job store is empty.
@@ -30,12 +30,20 @@ Behavior:
 Offline import example:
 
 ```bash
-python import_jobs_offline.py --input data/jobs.json --batch-size 50 --replace-jobs
+python scripts/import_jobs_offline.py --input data/jobs.json --batch-size 50 --replace-jobs
 ```
 
 ## Job seed data
 
-By default the backend loads `data/sample_jobs.json` on startup.
+The current `.env.example` points `JOB_DATA_PATH` to `data/sample_jobs.json`, but that file is not present in this repository.
+Set `JOB_DATA_PATH` to an existing file such as `data/jobs.json` before the first startup import.
+
+Example:
+
+```env
+JOB_DATA_PATH=data/jobs.json
+JOB_DATA_LIMIT=50
+```
 
 To seed the app from the PageFlux SQL dump instead, set:
 
@@ -49,7 +57,7 @@ JOB_DATA_LIMIT=300
 The offline import script can already read the SQL dump directly:
 
 ```bash
-python import_jobs_offline.py --input data/pageflux_dev_jobs_2026-03-23_172811.sql --limit 300 --batch-size 50
+python scripts/import_jobs_offline.py --input data/pageflux_dev_jobs_2026-03-23_172811.sql --limit 300 --batch-size 50
 ```
 
 Notes:

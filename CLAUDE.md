@@ -56,7 +56,7 @@ npm run typecheck      # tsc --noEmit
 - **Matching weights**: vector similarity 20%, skills 35%, experience 25%, education 10%, salary 10% (in `services/matching.py`).
 - **DI via service container**: All services/clients are wired in `bootstrap.py` — add new dependencies there.
 - **JSON serialization**: `domain/models.py` auto-converts snake_case fields to camelCase for API responses.
-- **Job import**: Done via offline script `import_jobs_offline.py`, not exposed as API endpoint.
+- **Job import**: Done via offline script `backend/scripts/import_jobs_offline.py`, not exposed as API endpoint.
 
 ## API Endpoints
 
