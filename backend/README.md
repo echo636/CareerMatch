@@ -46,10 +46,10 @@ JOB_DATA_LIMIT=300
 
 `JOB_DATA_LIMIT` is optional, but keeping it set while testing makes startup and result inspection easier.
 
-You can also convert the dump into the JSON format consumed by the offline import script:
+The offline import script can already read the SQL dump directly:
 
 ```bash
-python convert_job_seed.py --input data/pageflux_dev_jobs_2026-03-23_172811.sql --output data/pageflux_dev_jobs.json --limit 300
+python import_jobs_offline.py --input data/pageflux_dev_jobs_2026-03-23_172811.sql --limit 300 --batch-size 50
 ```
 
 Notes:
