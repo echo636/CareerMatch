@@ -104,6 +104,10 @@ class BaseLLMClient(ABC):
     ) -> list[GapInsight]:
         raise NotImplementedError
 
+    @abstractmethod
+    def score_job_match(self, resume_text: str, job_context: str) -> dict[str, Any]:
+        raise NotImplementedError
+
 
 
 class QwenLLMClient(BaseLLMClient):
@@ -159,6 +163,42 @@ class QwenLLMClient(BaseLLMClient):
                 f"Qwen gap insights response returned {len(insights)} valid insights; expected 3."
             )
         return insights
+
+    def score_job_match(self, resume_text: str, job_context: str) -> dict[str, Any]:
+        messages = self._match_score_messages(resume_text, job_context)
+        payload = self._chat_json(messages)
+        score = payload.get("score")
+        if not isinstance(score, (int, float)) or not (0 <= score <= 100):
+            raise RuntimeError(f"LLM match score out of range or missing: {payload}")
+        return {
+            "score": int(score),
+            "reasoning": str(payload.get("reasoning") or ""),
+        }
+
+    def _match_score_messages(self, resume_text: str, job_context: str) -> list[dict[str, str]]:
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "你是一位资深招聘评估专家。你的任务是评估一份简历与一个岗位的匹配程度。"
+                    "返回合法 JSON，不要 markdown 代码块，不要多余文字。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "请根据以下简历和岗位信息，综合评估匹配度并打分。\n"
+                    "评分维度：技能匹配度、工作经验相关性、学历契合度、薪资合理性、职业发展潜力。\n"
+                    "返回一个 JSON 对象，包含两个字段：\n"
+                    '- score: 整数，0-100，表示综合匹配度（0=完全不匹配，100=完美匹配）\n'
+                    '- reasoning: 字符串，用中文简要说明打分依据（2-3句话）\n'
+                    "\n"
+                    f"简历全文：\n{resume_text}\n"
+                    "\n"
+                    f"岗位信息：\n{job_context}"
+                ),
+            },
+        ]
 
     def _resume_messages(self, raw_text: str, file_name: str, resume_id: str) -> list[dict[str, str]]:
         return [
