@@ -1,13 +1,13 @@
 import type { Route } from "next";
 import Link from "next/link";
 
-import { RadarPlaceholder } from "@/components/charts/radar-placeholder";
 import { PageEventLogger } from "@/components/logging/page-event-logger";
 import { AppShell } from "@/components/layout/app-shell";
+import { JobGapAnalysis } from "@/components/matches/job-gap-analysis";
 import { MatchesFilterPanel } from "@/components/matches/matches-filter-panel";
 import { ScorePill } from "@/components/sections/score-pill";
 import { SectionCard } from "@/components/sections/section-card";
-import { getGapReport, getMatchOverview, getResumePreview } from "@/lib/api";
+import { getMatchOverview, getResumePreview } from "@/lib/api";
 import {
   appendMatchFiltersToSearchParams,
   getMatchFilterSummary,
@@ -18,7 +18,6 @@ import type {
   BonusExperience,
   BonusSkill,
   CoreExperience,
-  GapReport,
   JobProfile,
   MatchFilters,
   LanguageRequirement,
@@ -30,13 +29,6 @@ import type {
 } from "@/types/domain";
 
 const PAGE_SIZE = 8;
-const EMPTY_GAP_REPORT: GapReport = {
-  baselineRoles: [],
-  missingSkills: [],
-  salaryGap: 0,
-  experienceGapYears: 0,
-  insights: [],
-};
 const FRONTEND_SKILLS = new Set(["vue", "react", "javascript", "typescript", "uniapp", "html", "css"]);
 const BACKEND_SKILLS = new Set(["php", "laravel", "java", "python", "golang", "node.js", "mysql", "postgresql"]);
 const MOBILE_SKILLS = new Set(["flutter", "android", "ios", "uniapp", "react native"]);
@@ -466,10 +458,6 @@ function formatTier(tier: string): { label: string; className: string } {
   }
 }
 
-function clamp(value: number, minValue: number = 0, maxValue: number = 1): number {
-  return Math.min(maxValue, Math.max(minValue, value));
-}
-
 function getFilteredMatchedSkills(match: MatchResult): string[] {
   return uniqueMeaningfulValues(match.matchedSkills);
 }
@@ -478,58 +466,15 @@ function getFilteredMissingSkills(match: MatchResult): string[] {
   return uniqueMeaningfulValues(match.missingSkills);
 }
 
-function getGapBaselineRoles(matches: MatchResult[], report: GapReport): string[] {
-  const baselineRoles = uniqueMeaningfulValues(report.baselineRoles);
-  if (baselineRoles.length > 0) {
-    return baselineRoles;
-  }
-  return uniqueMeaningfulValues(matches.slice(0, 3).map((match) => match.job.basicInfo.title));
-}
-
-function buildGapRadarValues(leadMatch: MatchResult | null, report: GapReport) {
-  const missingSkillPenalty = Math.min(report.missingSkills.length, 8) / 8;
-  const skills = leadMatch
-    ? Math.max(leadMatch.breakdown.skillMatch, 1 - missingSkillPenalty * 0.85)
-    : 1 - missingSkillPenalty * 0.85;
-  const experience = leadMatch
-    ? leadMatch.breakdown.experienceMatch
-    : report.experienceGapYears > 0
-      ? 0.45
-      : 0.72;
-  const salary = leadMatch
-    ? leadMatch.breakdown.salaryMatch
-    : report.salaryGap > 0
-      ? 0.4
-      : 0.75;
-  const growth = clamp(
-    0.35 +
-      Math.min(report.missingSkills.length, 5) * 0.08 +
-      (report.experienceGapYears > 0 ? 0.1 : 0) +
-      (report.salaryGap > 0 ? 0.05 : 0),
-    0.3,
-    0.95,
-  );
-
-  return {
-    skills: clamp(skills, 0.2, 1),
-    experience: clamp(experience, 0.2, 1),
-    salary: clamp(salary, 0.2, 1),
-    growth,
-  };
-}
-
 export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const resolvedSearchParams = (await searchParams) ?? {};
   const resumeId = normalizeParam(resolvedSearchParams.resumeId);
   const currentPage = normalizePositiveInt(normalizeParam(resolvedSearchParams.page), 1);
   const matchFilters = parseMatchFiltersFromSearchParams(resolvedSearchParams);
   const requestedTopK = currentPage * PAGE_SIZE + 1;
-  const shouldLoadGapReport = currentPage === 1;
-
-  const [resume, matches, gapReport] = await Promise.all([
+  const [resume, matches] = await Promise.all([
     getResumePreview(resumeId),
     getMatchOverview(resumeId, requestedTopK, matchFilters),
-    shouldLoadGapReport ? getGapReport(resumeId, matchFilters) : Promise.resolve(EMPTY_GAP_REPORT),
   ]);
 
   const offset = (currentPage - 1) * PAGE_SIZE;
@@ -538,16 +483,11 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const hasPrevPage = currentPage > 1;
   const visibleStart = pageMatches.length > 0 ? offset + 1 : 0;
   const visibleEnd = pageMatches.length > 0 ? offset + pageMatches.length : 0;
-  const leadMatch = matches[0] ?? null;
   const resumeSkills = resume ? getResumeSkillNames(resume) : [];
   const resumeDegree = resume ? getResumeDegree(resume) : null;
   const resumeProjects = resume ? getResumeProjects(resume) : [];
   const resumeSummary = resume ? getResumeSummary(resume) : "";
   const sourceTypeLabel = resume ? formatSourceContentType(resume.sourceContentType) : null;
-  const gapBaselineRoles = getGapBaselineRoles(matches, gapReport);
-  const gapRadarValues = buildGapRadarValues(leadMatch, gapReport);
-  const hasGapContent =
-    gapBaselineRoles.length > 0 || gapReport.missingSkills.length > 0 || gapReport.insights.length > 0;
   const hasActiveFilters = hasActiveMatchFilters(matchFilters);
   const activeFilterSummary = getMatchFilterSummary(matchFilters);
 
@@ -706,97 +646,6 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
         accent={hasActiveFilters ? `${activeFilterSummary.length} 项生效中` : "未设置筛选"}
       >
         <MatchesFilterPanel resumeId={resumeId} currentPage={currentPage} filters={matchFilters} />
-      </SectionCard>
-
-      <SectionCard title="差距分析" description="结合当前匹配结果，总结技能、经验和薪资上的差距。">
-        {currentPage > 1 ? (
-          <div className="empty-state">
-            <p>差距分析基于首页的 Top 匹配岗位生成。当前正在浏览分页结果，请返回第一页查看完整分析。</p>
-            <Link href={buildMatchesHref(resumeId, 1, matchFilters)} className="primary-link">
-              返回第一页
-            </Link>
-          </div>
-        ) : resume && hasGapContent ? (
-          <div className="gap-layout">
-            <div className="gap-visual">
-              <RadarPlaceholder values={gapRadarValues} />
-              <div className="gap-stat-grid">
-                <article className="gap-stat-card">
-                  <span>对照岗位</span>
-                  <strong>{gapBaselineRoles.length}</strong>
-                </article>
-                <article className="gap-stat-card">
-                  <span>待补技能</span>
-                  <strong>{gapReport.missingSkills.length}</strong>
-                </article>
-                <article className="gap-stat-card">
-                  <span>经验差距</span>
-                  <strong>{gapReport.experienceGapYears} 年</strong>
-                </article>
-                <article className="gap-stat-card">
-                  <span>薪资差距</span>
-                  <strong>{gapReport.salaryGap > 0 ? `${gapReport.salaryGap} 元/月` : "已覆盖"}</strong>
-                </article>
-              </div>
-            </div>
-
-            <div className="gap-stack">
-              <div className="job-subsection">
-                <h5>对照岗位</h5>
-                {gapBaselineRoles.length > 0 ? (
-                  <div className="job-chip-row">
-                    {gapBaselineRoles.map((role) => (
-                      <span key={role} className="tag">
-                        {role}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p>当前暂无可展示的对照岗位。</p>
-                )}
-              </div>
-
-              <div className="job-subsection">
-                <h5>待补技能</h5>
-                {gapReport.missingSkills.length > 0 ? (
-                  <div className="job-chip-row">
-                    {gapReport.missingSkills.map((skill) => (
-                      <span key={skill} className="tag">
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p>当前简历与对照岗位之间暂无明显技能缺口。</p>
-                )}
-              </div>
-
-              <div className="insight-list">
-                {gapReport.insights.length > 0 ? (
-                  gapReport.insights.map((insight) => (
-                    <article key={insight.dimension} className="insight-card">
-                      <p className="eyebrow">{insight.dimension}</p>
-                      <h4>{insight.currentState}</h4>
-                      <p>{insight.targetState}</p>
-                      <strong>{insight.suggestion}</strong>
-                    </article>
-                  ))
-                ) : (
-                  <article className="insight-card">
-                    <p className="eyebrow">系统提示</p>
-                    <h4>Gap 报告暂未生成完整洞察</h4>
-                    <p>后端已经返回了匹配结果，但当前没有拿到可展示的结构化建议。</p>
-                    <strong>可以先参考上方待补技能和推荐岗位要求继续完善简历。</strong>
-                  </article>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <p>当前还没有足够的匹配结果来生成差距分析。请先上传简历，或确认岗位库已经完成导入。</p>
-          </div>
-        )}
       </SectionCard>
 
       <SectionCard title="推荐岗位" description="按匹配分从高到低展示。点击卡片可查看完整岗位信息与匹配明细。">
@@ -1120,6 +969,8 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                         <p>{match.reasoning}</p>
                       </div>
                     </section>
+
+                    {resume ? <JobGapAnalysis match={match} resume={resume} /> : null}
 
                     {tags.length > 0 ? (
                       <section className="job-detail-section">
