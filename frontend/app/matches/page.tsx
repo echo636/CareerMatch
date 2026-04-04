@@ -4,15 +4,23 @@ import Link from "next/link";
 import { RadarPlaceholder } from "@/components/charts/radar-placeholder";
 import { PageEventLogger } from "@/components/logging/page-event-logger";
 import { AppShell } from "@/components/layout/app-shell";
+import { MatchesFilterPanel } from "@/components/matches/matches-filter-panel";
 import { ScorePill } from "@/components/sections/score-pill";
 import { SectionCard } from "@/components/sections/section-card";
 import { getGapReport, getMatchOverview, getResumePreview } from "@/lib/api";
+import {
+  appendMatchFiltersToSearchParams,
+  getMatchFilterSummary,
+  hasActiveMatchFilters,
+  parseMatchFiltersFromSearchParams,
+} from "@/lib/match-filters";
 import type {
   BonusExperience,
   BonusSkill,
   CoreExperience,
   GapReport,
   JobProfile,
+  MatchFilters,
   LanguageRequirement,
   MatchResult,
   OptionalSkillGroup,
@@ -63,11 +71,12 @@ function normalizePositiveInt(value: string | undefined, fallback: number): numb
   return parsed;
 }
 
-function buildMatchesHref(resumeId: string | undefined, page: number): Route {
+function buildMatchesHref(resumeId: string | undefined, page: number, filters: MatchFilters): Route {
   const params = new URLSearchParams();
   if (resumeId) {
     params.set("resumeId", resumeId);
   }
+  appendMatchFiltersToSearchParams(params, filters);
   if (page > 1) {
     params.set("page", String(page));
   }
@@ -362,6 +371,32 @@ function formatJobType(job: JobProfile): string {
   return isMeaningfulText(job.basicInfo.jobType) ? job.basicInfo.jobType : "未注明";
 }
 
+function formatWorkModes(job: JobProfile): string {
+  const workModes = uniqueMeaningfulValues(job.filterFacets.workModes).map((mode) => {
+    switch (mode) {
+      case "remote":
+        return "远程";
+      case "hybrid":
+        return "混合办公";
+      case "onsite":
+        return "现场";
+      default:
+        return mode;
+    }
+  });
+  return workModes.length > 0 ? workModes.join(" / ") : "未注明";
+}
+
+function formatPostedAt(job: JobProfile): string {
+  if (isMeaningfulText(job.filterFacets.postedAt)) {
+    return job.filterFacets.postedAt.slice(0, 10);
+  }
+  if (job.filterFacets.postedDaysAgo != null) {
+    return `${job.filterFacets.postedDaysAgo} 天前`;
+  }
+  return "未注明";
+}
+
 function formatRequiredSkill(skill: RequiredSkill): string {
   const extras = [
     skill.level ? `级别 ${skill.level}` : null,
@@ -487,13 +522,14 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const resolvedSearchParams = (await searchParams) ?? {};
   const resumeId = normalizeParam(resolvedSearchParams.resumeId);
   const currentPage = normalizePositiveInt(normalizeParam(resolvedSearchParams.page), 1);
+  const matchFilters = parseMatchFiltersFromSearchParams(resolvedSearchParams);
   const requestedTopK = currentPage * PAGE_SIZE + 1;
   const shouldLoadGapReport = currentPage === 1;
 
   const [resume, matches, gapReport] = await Promise.all([
     getResumePreview(resumeId),
-    getMatchOverview(resumeId, requestedTopK),
-    shouldLoadGapReport ? getGapReport(resumeId) : Promise.resolve(EMPTY_GAP_REPORT),
+    getMatchOverview(resumeId, requestedTopK, matchFilters),
+    shouldLoadGapReport ? getGapReport(resumeId, matchFilters) : Promise.resolve(EMPTY_GAP_REPORT),
   ]);
 
   const offset = (currentPage - 1) * PAGE_SIZE;
@@ -512,6 +548,8 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
   const gapRadarValues = buildGapRadarValues(leadMatch, gapReport);
   const hasGapContent =
     gapBaselineRoles.length > 0 || gapReport.missingSkills.length > 0 || gapReport.insights.length > 0;
+  const hasActiveFilters = hasActiveMatchFilters(matchFilters);
+  const activeFilterSummary = getMatchFilterSummary(matchFilters);
 
   return (
     <AppShell activePath="/matches">
@@ -526,6 +564,7 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
           fetchedMatchesCount: matches.length,
           visibleMatchesCount: pageMatches.length,
           hasNextPage,
+          filters: matchFilters,
         }}
       />
       <SectionCard title="简历概览" description="展示当前简历的核心信息。">
@@ -661,11 +700,19 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
         )}
       </SectionCard>
 
+      <SectionCard
+        title="岗位筛选"
+        description="匹配前和匹配后的筛选条件共用一套规则，修改后会重新请求推荐结果。"
+        accent={hasActiveFilters ? `${activeFilterSummary.length} 项生效中` : "未设置筛选"}
+      >
+        <MatchesFilterPanel resumeId={resumeId} currentPage={currentPage} filters={matchFilters} />
+      </SectionCard>
+
       <SectionCard title="差距分析" description="结合当前匹配结果，总结技能、经验和薪资上的差距。">
         {currentPage > 1 ? (
           <div className="empty-state">
             <p>差距分析基于首页的 Top 匹配岗位生成。当前正在浏览分页结果，请返回第一页查看完整分析。</p>
-            <Link href={buildMatchesHref(resumeId, 1)} className="primary-link">
+            <Link href={buildMatchesHref(resumeId, 1, matchFilters)} className="primary-link">
               返回第一页
             </Link>
           </div>
@@ -761,14 +808,14 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
               </p>
               <div className="pagination-actions">
                 {hasPrevPage ? (
-                  <Link href={buildMatchesHref(resumeId, currentPage - 1)} className="pagination-link">
+                  <Link href={buildMatchesHref(resumeId, currentPage - 1, matchFilters)} className="pagination-link">
                     上一页
                   </Link>
                 ) : (
                   <span className="pagination-link pagination-link-disabled">上一页</span>
                 )}
                 {hasNextPage ? (
-                  <Link href={buildMatchesHref(resumeId, currentPage + 1)} className="pagination-link">
+                  <Link href={buildMatchesHref(resumeId, currentPage + 1, matchFilters)} className="pagination-link">
                     下一页
                   </Link>
                 ) : (
@@ -806,7 +853,8 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                         <p className="eyebrow">岗位 {visibleIndex}</p>
                         <h3>{match.job.basicInfo.title}</h3>
                         <p>
-                          {match.job.company} / {formatLocation(match.job)} / {formatJobType(match.job)}
+                          {match.job.company} / {formatLocation(match.job)} / {formatJobType(match.job)} /{" "}
+                          {formatWorkModes(match.job)}
                         </p>
                       </div>
                       <div className="job-card-score">
@@ -854,6 +902,10 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                           <strong>{formatJobType(match.job)}</strong>
                         </div>
                         <div className="job-meta-item">
+                          <span>工作方式</span>
+                          <strong>{formatWorkModes(match.job)}</strong>
+                        </div>
+                        <div className="job-meta-item">
                           <span>薪资</span>
                           <strong>{formatSalary(match.job)}</strong>
                         </div>
@@ -870,6 +922,10 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
                               " 年",
                             ) ?? "未注明"}
                           </strong>
+                        </div>
+                        <div className="job-meta-item">
+                          <span>发布时间</span>
+                          <strong>{formatPostedAt(match.job)}</strong>
                         </div>
                       </div>
                     </section>
@@ -1086,14 +1142,14 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
               <p className="muted">结果按综合匹配分降序排列。翻页会继续请求更多候选结果。</p>
               <div className="pagination-actions">
                 {hasPrevPage ? (
-                  <Link href={buildMatchesHref(resumeId, currentPage - 1)} className="pagination-link">
+                  <Link href={buildMatchesHref(resumeId, currentPage - 1, matchFilters)} className="pagination-link">
                     上一页
                   </Link>
                 ) : (
                   <span className="pagination-link pagination-link-disabled">上一页</span>
                 )}
                 {hasNextPage ? (
-                  <Link href={buildMatchesHref(resumeId, currentPage + 1)} className="pagination-link">
+                  <Link href={buildMatchesHref(resumeId, currentPage + 1, matchFilters)} className="pagination-link">
                     下一页
                   </Link>
                 ) : (
@@ -1107,7 +1163,7 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
             {matches.length > 0 && hasPrevPage ? (
               <>
                 <p>当前页没有可展示的结果。请返回上一页查看已加载内容。</p>
-                <Link href={buildMatchesHref(resumeId, currentPage - 1)} className="primary-link">
+                <Link href={buildMatchesHref(resumeId, currentPage - 1, matchFilters)} className="primary-link">
                   返回上一页
                 </Link>
               </>

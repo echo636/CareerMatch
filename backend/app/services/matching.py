@@ -12,6 +12,7 @@ from app.domain.models import (
     JobEducationConstraints,
     JobProfile,
     MatchBreakdown,
+    MatchFilters,
     MatchResult,
     OptionalSkill,
     OptionalSkillGroup,
@@ -64,8 +65,14 @@ class MatchingService:
         self.embedding_client = embedding_client
         self.vector_store = vector_store
 
-    def recommend(self, resume_id: str, top_k: int = 5) -> list[MatchResult]:
-        logger.info("matching.start resume_id=%s top_k=%s", resume_id, top_k)
+    def recommend(self, resume_id: str, top_k: int = 5, filters: MatchFilters | None = None) -> list[MatchResult]:
+        active_filters = filters if filters and filters.is_active else None
+        logger.info(
+            "matching.start resume_id=%s top_k=%s filters=%s",
+            resume_id,
+            top_k,
+            self._serialize_filters(active_filters),
+        )
         resume = self.resume_repository.get(resume_id)
         if resume is None:
             logger.warning("matching.missing_resume resume_id=%s", resume_id)
@@ -73,7 +80,7 @@ class MatchingService:
 
         resume_vector = self._ensure_resume_vector(resume)
         job_count = self._job_count()
-        recall_size = self._dynamic_recall_size(top_k, job_count)
+        recall_size = self._dynamic_recall_size(top_k, job_count, active_filters)
         recalled = self.vector_store.query("jobs", resume_vector, recall_size)
 
         candidate_skill_index = self._build_candidate_skill_index(resume)
@@ -95,7 +102,7 @@ class MatchingService:
                 )
                 continue
 
-            passed_filters, filter_reason = self._filter_decision(resume, job)
+            passed_filters, filter_reason = self._filter_decision(resume, job, active_filters)
             if not passed_filters:
                 filtered_out += 1
                 candidate_logs.append(
@@ -152,13 +159,14 @@ class MatchingService:
         matches.sort(key=lambda item: item.breakdown.total, reverse=True)
         result = matches[:top_k]
         logger.info(
-            "matching.completed resume_id=%s recalled=%s filtered_out=%s matched=%s returned=%s top_job=%s",
+            "matching.completed resume_id=%s recalled=%s filtered_out=%s matched=%s returned=%s top_job=%s filters=%s",
             resume_id,
             len(recalled),
             filtered_out,
             len(matches),
             len(result),
             result[0].job.title if result else None,
+            self._serialize_filters(active_filters),
         )
         score_logger.info(
             to_log_json(
@@ -166,6 +174,7 @@ class MatchingService:
                     "event": "matching.recommend",
                     "resume_id": resume_id,
                     "top_k": top_k,
+                    "filters": self._serialize_filters(active_filters),
                     "recall_size": recall_size,
                     "recalled_count": len(recalled),
                     "filtered_out": filtered_out,
@@ -180,7 +189,12 @@ class MatchingService:
         self,
         resume: ResumeProfile,
         job: JobProfile,
+        filters: MatchFilters | None = None,
     ) -> tuple[bool, str]:
+        if filters is not None:
+            passed_requested_filters, requested_filter_reason = self._matches_requested_filters(job, filters)
+            if not passed_requested_filters:
+                return False, requested_filter_reason
         if self._minimum_degree_gate(resume, job.education_constraints) < 0.5:
             return False, "education_below_threshold"
         if self._salary_far_above_budget(resume, job):
@@ -188,6 +202,60 @@ class MatchingService:
         if self._direction_mismatch(resume, job):
             return False, "direction_mismatch"
         return True, "passed"
+
+    def _serialize_filters(self, filters: MatchFilters | None) -> dict[str, object] | None:
+        if filters is None or not filters.is_active:
+            return None
+        return {
+            "role_categories": list(filters.role_categories),
+            "work_modes": list(filters.work_modes),
+            "internship_preference": filters.internship_preference,
+            "posted_within_days": filters.posted_within_days,
+            "min_experience_years": filters.min_experience_years,
+            "max_experience_years": filters.max_experience_years,
+        }
+
+    def _matches_requested_filters(self, job: JobProfile, filters: MatchFilters) -> tuple[bool, str]:
+        job_role_categories = {value.lower() for value in job.filter_facets.role_categories}
+        if filters.role_categories and not (job_role_categories & {value.lower() for value in filters.role_categories}):
+            return False, "user_role_category_filtered"
+
+        job_work_modes = {value.lower() for value in job.filter_facets.work_modes}
+        if filters.work_modes and not (job_work_modes & {value.lower() for value in filters.work_modes}):
+            return False, "user_work_mode_filtered"
+
+        if filters.internship_preference == "intern" and job.filter_facets.is_internship is not True:
+            return False, "user_internship_filtered"
+        if filters.internship_preference == "fulltime" and job.filter_facets.is_internship is True:
+            return False, "user_fulltime_filtered"
+
+        if filters.posted_within_days is not None:
+            posted_days_ago = job.filter_facets.posted_days_ago
+            if posted_days_ago is None or posted_days_ago > filters.posted_within_days:
+                return False, "user_post_time_filtered"
+
+        if not self._matches_experience_range(job, filters):
+            return False, "user_experience_filtered"
+
+        return True, "passed"
+
+    def _matches_experience_range(self, job: JobProfile, filters: MatchFilters) -> bool:
+        if filters.min_experience_years is None and filters.max_experience_years is None:
+            return True
+
+        job_min = job.filter_facets.min_experience_years
+        job_max = job.filter_facets.max_experience_years
+        if job_min is None and job_max is None:
+            return True
+
+        effective_min = job_min if job_min is not None else job_max
+        effective_max = job_max if job_max is not None else job_min
+
+        if filters.min_experience_years is not None and effective_max is not None and effective_max < filters.min_experience_years:
+            return False
+        if filters.max_experience_years is not None and effective_min is not None and effective_min > filters.max_experience_years:
+            return False
+        return True
 
     def _salary_far_above_budget(self, resume: ResumeProfile, job: JobProfile) -> bool:
         """Filter out jobs where the candidate's minimum salary expectation
@@ -260,7 +328,7 @@ class MatchingService:
             return False
         return len(resume_tags & job_tags) == 0
 
-    def _dynamic_recall_size(self, top_k: int, job_count: int) -> int:
+    def _dynamic_recall_size(self, top_k: int, job_count: int, filters: MatchFilters | None = None) -> int:
         """Scale recall multiplier based on job pool size."""
         if job_count <= 50:
             multiplier = 3
@@ -270,7 +338,12 @@ class MatchingService:
             multiplier = 8
         else:
             multiplier = 10
-        return max(top_k * multiplier, top_k)
+        recall_size = max(top_k * multiplier, top_k)
+        if filters is not None and filters.is_active:
+            recall_size = max(recall_size, top_k * max(multiplier * 2, 8))
+        if job_count > 0:
+            return min(recall_size, job_count)
+        return recall_size
 
     def _job_count(self) -> int:
         try:

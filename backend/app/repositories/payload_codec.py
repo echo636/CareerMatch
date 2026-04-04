@@ -6,6 +6,7 @@ from app.domain.models import (
     BonusExperience,
     BonusSkill,
     CoreExperience,
+    JobFilterFacets,
     JobBasicInfo,
     JobEducationConstraints,
     JobExperienceRequirements,
@@ -24,6 +25,7 @@ from app.domain.models import (
     ResumeTag,
     ResumeWorkExperience,
     SalaryRange,
+    build_job_filter_facets,
 )
 
 
@@ -49,10 +51,13 @@ def job_from_payload(payload: dict[str, Any]) -> JobProfile:
     skill_requirements = payload.get("skill_requirements") or {}
     experience_requirements = payload.get("experience_requirements") or {}
     education_constraints = payload.get("education_constraints") or {}
+    basic_info_payload = payload.get("basic_info") or {"title": "Untitled Role"}
+    tags = [JobTag(**item) for item in payload.get("tags") or []]
+    filter_facets_payload = payload.get("filter_facets") or {}
     return JobProfile(
         id=str(payload.get("id") or ""),
         company=str(payload.get("company") or "Company Pending"),
-        basic_info=JobBasicInfo(**(payload.get("basic_info") or {"title": "Untitled Role"})),
+        basic_info=JobBasicInfo(**basic_info_payload),
         skill_requirements=JobSkillRequirements(
             required=[RequiredSkill(**item) for item in skill_requirements.get("required") or []],
             optional_groups=[
@@ -82,5 +87,19 @@ def job_from_payload(payload: dict[str, Any]) -> JobProfile:
             age_range=education_constraints.get("age_range"),
             other=list(education_constraints.get("other") or []),
         ),
-        tags=[JobTag(**item) for item in payload.get("tags") or []],
+        tags=tags,
+        filter_facets=(
+            JobFilterFacets(**filter_facets_payload)
+            if filter_facets_payload
+            else build_job_filter_facets(
+                title=str(basic_info_payload.get("title") or "Untitled Role"),
+                location=basic_info_payload.get("location"),
+                job_type=basic_info_payload.get("job_type"),
+                summary=basic_info_payload.get("summary"),
+                min_total_years=experience_requirements.get("min_total_years"),
+                max_total_years=experience_requirements.get("max_total_years"),
+                tags=tags,
+                raw_posted_at_values=[payload.get(field_name) for field_name in ("posted_at", "created_at", "updated_at")],
+            )
+        ),
     )

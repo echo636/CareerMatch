@@ -1,5 +1,6 @@
 ﻿from flask import Blueprint, current_app, jsonify, request
 
+from app.api.routes.filter_payloads import parse_match_filters
 from app.core.logging_utils import get_logger
 from app.domain.models import serialize
 
@@ -16,10 +17,11 @@ def recommend_matches():
         logger.warning("matches.recommend rejected_missing_resume_id")
         return jsonify({"error": "resume_id is required"}), 400
     top_k = int(payload.get("top_k", 5))
-    logger.info("matches.recommend requested resume_id=%s top_k=%s", resume_id, top_k)
+    filters = parse_match_filters(payload)
+    logger.info("matches.recommend requested resume_id=%s top_k=%s filters=%s", resume_id, top_k, filters)
 
     try:
-        matches = services.matching_service.recommend(resume_id, top_k)
+        matches = services.matching_service.recommend(resume_id, top_k, filters)
     except ValueError as exc:
         logger.warning("matches.recommend missing_resume resume_id=%s error=%s", resume_id, exc)
         return jsonify({"error": str(exc)}), 404

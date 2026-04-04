@@ -1,6 +1,7 @@
-﻿import type { GapReport, MatchResult, ResumeProfile } from "@/types/domain";
+import type { GapReport, MatchFilters, MatchResult, ResumeProfile } from "@/types/domain";
 
 import { logFrontendEvent, summarizeFrontendPayload } from "@/lib/logger";
+import { normalizeMatchFilters } from "@/lib/match-filters";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -128,10 +129,14 @@ export async function uploadResume(formData: FormData): Promise<UploadResumeResp
 export async function getResumePreview(resumeId?: string | null): Promise<ResumeProfile | null> {
   const normalizedResumeId = resumeId?.trim();
   if (!normalizedResumeId || !API_BASE_URL) {
-    logFrontendEvent("resume.preview.skipped", {
-      resumeId: normalizedResumeId ?? null,
-      hasApiBaseUrl: Boolean(API_BASE_URL),
-    }, "warn");
+    logFrontendEvent(
+      "resume.preview.skipped",
+      {
+        resumeId: normalizedResumeId ?? null,
+        hasApiBaseUrl: Boolean(API_BASE_URL),
+      },
+      "warn",
+    );
     return null;
   }
 
@@ -154,13 +159,18 @@ export async function getResumePreview(resumeId?: string | null): Promise<Resume
 export async function getMatchOverview(
   resumeId?: string | null,
   topK: number = 3,
+  filters?: MatchFilters,
 ): Promise<MatchResult[]> {
   const normalizedResumeId = resumeId?.trim();
   if (!normalizedResumeId || !API_BASE_URL) {
-    logFrontendEvent("matches.overview.skipped", {
-      resumeId: normalizedResumeId ?? null,
-      hasApiBaseUrl: Boolean(API_BASE_URL),
-    }, "warn");
+    logFrontendEvent(
+      "matches.overview.skipped",
+      {
+        resumeId: normalizedResumeId ?? null,
+        hasApiBaseUrl: Boolean(API_BASE_URL),
+      },
+      "warn",
+    );
     return [];
   }
 
@@ -170,6 +180,7 @@ export async function getMatchOverview(
       body: JSON.stringify({
         resume_id: normalizedResumeId,
         top_k: topK,
+        filters: filters ? normalizeMatchFilters(filters) : undefined,
       }),
     });
     return response.matches;
@@ -186,13 +197,17 @@ export async function getMatchOverview(
   }
 }
 
-export async function getGapReport(resumeId?: string | null): Promise<GapReport> {
+export async function getGapReport(resumeId?: string | null, filters?: MatchFilters): Promise<GapReport> {
   const normalizedResumeId = resumeId?.trim();
   if (!normalizedResumeId || !API_BASE_URL) {
-    logFrontendEvent("gap.report.skipped", {
-      resumeId: normalizedResumeId ?? null,
-      hasApiBaseUrl: Boolean(API_BASE_URL),
-    }, "warn");
+    logFrontendEvent(
+      "gap.report.skipped",
+      {
+        resumeId: normalizedResumeId ?? null,
+        hasApiBaseUrl: Boolean(API_BASE_URL),
+      },
+      "warn",
+    );
     return emptyGapReport;
   }
 
@@ -202,6 +217,7 @@ export async function getGapReport(resumeId?: string | null): Promise<GapReport>
       body: JSON.stringify({
         resume_id: normalizedResumeId,
         top_k: 3,
+        filters: filters ? normalizeMatchFilters(filters) : undefined,
       }),
     });
     return response.report;

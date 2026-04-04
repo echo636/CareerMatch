@@ -1,5 +1,6 @@
 ﻿from flask import Blueprint, current_app, jsonify, request
 
+from app.api.routes.filter_payloads import parse_match_filters
 from app.core.logging_utils import get_logger
 from app.domain.models import serialize
 
@@ -16,10 +17,11 @@ def build_gap_report():
         logger.warning("gap.report rejected_missing_resume_id")
         return jsonify({"error": "resume_id is required"}), 400
     top_k = int(payload.get("top_k", 3))
-    logger.info("gap.report requested resume_id=%s top_k=%s", resume_id, top_k)
+    filters = parse_match_filters(payload)
+    logger.info("gap.report requested resume_id=%s top_k=%s filters=%s", resume_id, top_k, filters)
 
     try:
-        report = services.gap_analysis_service.build_report(resume_id, top_k)
+        report = services.gap_analysis_service.build_report(resume_id, top_k, filters)
     except ValueError as exc:
         logger.warning("gap.report missing_resume resume_id=%s error=%s", resume_id, exc)
         return jsonify({"error": str(exc)}), 404

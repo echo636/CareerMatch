@@ -184,6 +184,16 @@ export type JobTag = {
   weight?: number | null;
 };
 
+export type JobFilterFacets = {
+  roleCategories: string[];
+  workModes: string[];
+  isInternship?: boolean | null;
+  postedAt?: string | null;
+  postedDaysAgo?: number | null;
+  minExperienceYears?: number | null;
+  maxExperienceYears?: number | null;
+};
+
 export type JobProfile = {
   id: string;
   company: string;
@@ -192,6 +202,7 @@ export type JobProfile = {
   experienceRequirements: JobExperienceRequirements;
   educationConstraints: JobEducationConstraints;
   tags: JobTag[];
+  filterFacets: JobFilterFacets;
 };
 
 export type MatchBreakdown = {
@@ -225,4 +236,17 @@ export type GapReport = {
   salaryGap: number;
   experienceGapYears: number;
   insights: GapInsight[];
+};
+
+export type InternshipPreference = "all" | "intern" | "fulltime";
+
+export type WorkMode = "remote" | "hybrid" | "onsite";
+
+export type MatchFilters = {
+  roleCategories: string[];
+  workModes: WorkMode[];
+  internshipPreference: InternshipPreference;
+  postedWithinDays?: number | null;
+  minExperienceYears?: number | null;
+  maxExperienceYears?: number | null;
 };

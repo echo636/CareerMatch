@@ -2,7 +2,7 @@
 
 from app.clients.llm import BaseLLMClient
 from app.core.logging_utils import get_logger
-from app.domain.models import GapReport
+from app.domain.models import GapReport, MatchFilters
 from app.repositories.in_memory import ResumeRepository
 from app.services.matching import MatchingService
 
@@ -20,14 +20,14 @@ class GapAnalysisService:
         self.matching_service = matching_service
         self.llm_client = llm_client
 
-    def build_report(self, resume_id: str, top_k: int = 3) -> GapReport:
-        logger.info("gap_analysis.start resume_id=%s top_k=%s", resume_id, top_k)
+    def build_report(self, resume_id: str, top_k: int = 3, filters: MatchFilters | None = None) -> GapReport:
+        logger.info("gap_analysis.start resume_id=%s top_k=%s filters=%s", resume_id, top_k, filters)
         resume = self.resume_repository.get(resume_id)
         if resume is None:
             logger.warning("gap_analysis.missing_resume resume_id=%s", resume_id)
             raise ValueError(f"Resume '{resume_id}' does not exist.")
 
-        matches = self.matching_service.recommend(resume_id, top_k)
+        matches = self.matching_service.recommend(resume_id, top_k, filters)
         baseline_roles = [match.job.title for match in matches]
         missing_skills = self._collect_missing_skills(matches)
         salary_gap = max(0, round(self._average_target_salary(matches) - resume.expected_salary.max))

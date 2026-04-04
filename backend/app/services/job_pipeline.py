@@ -11,6 +11,7 @@ from app.domain.models import (
     BonusExperience,
     BonusSkill,
     CoreExperience,
+    JobFilterFacets,
     JobBasicInfo,
     JobEducationConstraints,
     JobExperienceRequirements,
@@ -21,6 +22,7 @@ from app.domain.models import (
     OptionalSkill,
     OptionalSkillGroup,
     RequiredSkill,
+    build_job_filter_facets,
 )
 from app.job_enrichment import clean_text
 
@@ -78,6 +80,7 @@ class JobPipelineService:
                 for item in (self._build_tag(tag) for tag in extracted.get("tags") or [])
                 if item is not None
             ],
+            filter_facets=self._build_filter_facets(extracted, record),
         )
         logger.info(
             "job_pipeline.normalize job_id=%s title=%s required_skills=%s bonus_skills=%s",
@@ -87,6 +90,36 @@ class JobPipelineService:
             len(job.skill_requirements.bonus),
         )
         return job
+
+    def _build_filter_facets(self, extracted: dict[str, Any], record: dict[str, Any]) -> JobFilterFacets:
+        basic_info = extracted.get("basic_info") or {}
+        experience_requirements = extracted.get("experience_requirements") or {}
+        tags = [
+            item
+            for item in (self._build_tag(tag) for tag in extracted.get("tags") or [])
+            if item is not None
+        ]
+        raw_posted_at_values = [
+            extracted.get("posted_at"),
+            record.get("posted_at"),
+            record.get("published_at"),
+            record.get("publish_time"),
+            record.get("publish_date"),
+            record.get("created_at"),
+            record.get("updated_at"),
+            record.get("create_time"),
+            record.get("update_time"),
+        ]
+        return build_job_filter_facets(
+            title=str(basic_info.get("title") or extracted.get("title") or "Untitled Role"),
+            location=basic_info.get("location"),
+            job_type=basic_info.get("job_type"),
+            summary=basic_info.get("summary"),
+            min_total_years=experience_requirements.get("min_total_years"),
+            max_total_years=experience_requirements.get("max_total_years"),
+            tags=tags,
+            raw_posted_at_values=raw_posted_at_values,
+        )
 
     def _vector_payload(self, job: JobProfile) -> str:
         return " ".join([job.summary, *job.skills, *job.project_keywords])

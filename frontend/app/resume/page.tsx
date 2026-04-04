@@ -8,14 +8,14 @@ const resumeSteps = [
   "上传文件或粘贴简历文本。",
   "系统提取正文并生成结构化简历。",
   "保存结果并生成可复用的向量数据。",
-  "跳转到匹配结果页查看推荐岗位。",
+  "开始匹配前先设置岗位筛选条件，再进入结果页。",
 ];
 
 export default function ResumePage() {
   return (
     <AppShell activePath="/resume">
       <PageEventLogger event="page.resume.view" payload={{ route: "/resume" }} />
-      <SectionCard title="上传简历" description="提交真实简历后，系统会返回新的 resumeId，并自动进入匹配流程。">
+      <SectionCard title="上传简历" description="提交真实简历后，系统会生成新的 resumeId，并先弹出岗位筛选设置，再进入匹配结果。">
         <ResumeUploadForm />
       </SectionCard>
 
