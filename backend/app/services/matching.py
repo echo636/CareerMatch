@@ -5,6 +5,7 @@ from math import sqrt
 
 from app.clients.embedding import BaseEmbeddingClient
 from app.clients.vector_store import BaseVectorStore
+from app.core.config import MatchingAlgorithmConfig, default_matching_algorithm_config
 from app.core.logging_utils import get_logger, get_score_logger, to_log_json
 from app.domain.models import (
     BonusExperience,
@@ -30,13 +31,7 @@ LEVEL_RANK = {
     "expert": 4,
 }
 
-TOTAL_WEIGHT_VECTOR = 0.30
-TOTAL_WEIGHT_SKILL = 0.15
-TOTAL_WEIGHT_EXPERIENCE = 0.40
-TOTAL_WEIGHT_EDUCATION = 0.15
 SKILL_VECTOR_NAMESPACE = "skill_terms"
-SEMANTIC_SKILL_MIN_SIMILARITY = 0.88
-SEMANTIC_SKILL_MAX_SCORE = 0.85
 
 DEGREE_RANK = {
     "high_school": 1,
@@ -68,11 +63,13 @@ class MatchingService:
         resume_repository: ResumeRepository,
         embedding_client: BaseEmbeddingClient,
         vector_store: BaseVectorStore,
+        algorithm_config: MatchingAlgorithmConfig | None = None,
     ) -> None:
         self.job_repository = job_repository
         self.resume_repository = resume_repository
         self.embedding_client = embedding_client
         self.vector_store = vector_store
+        self.algorithm_config = algorithm_config or default_matching_algorithm_config()
 
     def recommend(self, resume_id: str, top_k: int = 5, filters: MatchFilters | None = None) -> list[MatchResult]:
         active_filters = filters if filters and filters.is_active else None
@@ -214,7 +211,7 @@ class MatchingService:
             passed_requested_filters, requested_filter_reason = self._matches_requested_filters(job, filters)
             if not passed_requested_filters:
                 return False, requested_filter_reason
-        if self._minimum_degree_gate(resume, job.education_constraints) < 0.5:
+        if self._minimum_degree_gate(resume, job.education_constraints) < self.algorithm_config.minimum_degree_filter_threshold:
             return False, "education_below_threshold"
         if self._salary_far_above_budget(resume, job):
             return False, "salary_far_above_budget"
@@ -283,7 +280,7 @@ class MatchingService:
             return False
         if resume.expected_salary.min <= 0:
             return False
-        return resume.expected_salary.min > job.salary_range.max * 1.5
+        return resume.expected_salary.min > job.salary_range.max * self.algorithm_config.salary_far_above_budget_ratio
 
     def _classify_tier(
         self,
@@ -307,9 +304,9 @@ class MatchingService:
         ):
             return "match"
 
-        if ratio >= 1.20:
+        if ratio >= self.algorithm_config.tier_reach_ratio:
             return "reach"
-        if ratio <= 0.85:
+        if ratio <= self.algorithm_config.tier_safety_ratio:
             return "safety"
         return "match"
 
@@ -343,23 +340,28 @@ class MatchingService:
             for tag in job.tags
             if (tag.category or "").lower() in {"tech", "domain", "industry"}
         }
-        if len(resume_tags) < 3 or len(job_tags) < 3:
+        min_tag_count = self.algorithm_config.direction_mismatch_min_tag_count
+        if len(resume_tags) < min_tag_count or len(job_tags) < min_tag_count:
             return False
         return len(resume_tags & job_tags) == 0
 
     def _dynamic_recall_size(self, top_k: int, job_count: int, filters: MatchFilters | None = None) -> int:
         """Scale recall multiplier based on job pool size."""
-        if job_count <= 50:
-            multiplier = 3
-        elif job_count <= 200:
-            multiplier = 5
-        elif job_count <= 1000:
-            multiplier = 8
+        config = self.algorithm_config
+        if job_count <= config.recall_small_job_pool_max:
+            multiplier = config.recall_multiplier_small
+        elif job_count <= config.recall_medium_job_pool_max:
+            multiplier = config.recall_multiplier_medium
+        elif job_count <= config.recall_large_job_pool_max:
+            multiplier = config.recall_multiplier_large
         else:
-            multiplier = 10
+            multiplier = config.recall_multiplier_xlarge
         recall_size = max(top_k * multiplier, top_k)
         if filters is not None and filters.is_active:
-            recall_size = max(recall_size, top_k * max(multiplier * 2, 8))
+            recall_size = max(
+                recall_size,
+                top_k * max(multiplier * config.filtered_recall_scale, config.filtered_recall_min_multiplier),
+            )
         if job_count > 0:
             return min(recall_size, job_count)
         return recall_size
@@ -384,9 +386,18 @@ class MatchingService:
         bonus_skill_score = self._bonus_skill_score(job, candidate_skill_index, skill_vector_cache)
         skill_match = self._weighted_score(
             [
-                (self._average(required_scores), 0.6 if required_scores else 0.0),
-                (self._average(optional_scores), 0.25 if optional_scores else 0.0),
-                (bonus_skill_score, 0.15 if job.skill_requirements.bonus else 0.0),
+                (
+                    self._average(required_scores),
+                    self.algorithm_config.skill_required_weight if required_scores else 0.0,
+                ),
+                (
+                    self._average(optional_scores),
+                    self.algorithm_config.skill_optional_weight if optional_scores else 0.0,
+                ),
+                (
+                    bonus_skill_score,
+                    self.algorithm_config.skill_bonus_weight if job.skill_requirements.bonus else 0.0,
+                ),
             ]
         )
 
@@ -395,9 +406,20 @@ class MatchingService:
         total_years_score = self._total_years_score(resume, job)
         experience_match = self._weighted_score(
             [
-                (self._average(core_experience_scores), 0.6 if core_experience_scores else 0.0),
-                (bonus_experience_score, 0.15 if job.experience_requirements.bonus else 0.0),
-                (total_years_score, 0.25 if job.experience_requirements.min_total_years is not None else 0.0),
+                (
+                    self._average(core_experience_scores),
+                    self.algorithm_config.experience_core_weight if core_experience_scores else 0.0,
+                ),
+                (
+                    bonus_experience_score,
+                    self.algorithm_config.experience_bonus_weight if job.experience_requirements.bonus else 0.0,
+                ),
+                (
+                    total_years_score,
+                    self.algorithm_config.experience_total_years_weight
+                    if job.experience_requirements.min_total_years is not None
+                    else 0.0,
+                ),
             ]
         )
 
@@ -406,12 +428,14 @@ class MatchingService:
         total = round(
             self._weighted_score(
                 [
-                    (vector_similarity, TOTAL_WEIGHT_VECTOR),
-                    (skill_match, TOTAL_WEIGHT_SKILL),
-                    (experience_match, TOTAL_WEIGHT_EXPERIENCE),
+                    (vector_similarity, self.algorithm_config.total_weight_vector),
+                    (skill_match, self.algorithm_config.total_weight_skill),
+                    (experience_match, self.algorithm_config.total_weight_experience),
                     (
                         education_match,
-                        TOTAL_WEIGHT_EDUCATION if self._has_education_constraints(job.education_constraints) else 0.0,
+                        self.algorithm_config.total_weight_education
+                        if self._has_education_constraints(job.education_constraints)
+                        else 0.0,
                     ),
                     # Salary is NOT included in total; it is used for tier classification only.
                 ]
@@ -699,7 +723,7 @@ class MatchingService:
                 best_similarity = similarity
                 best_candidate = candidate
 
-        if best_candidate is None or best_similarity < SEMANTIC_SKILL_MIN_SIMILARITY:
+        if best_candidate is None or best_similarity < self.algorithm_config.semantic_skill_min_similarity:
             return 0.0, None
         return self._semantic_similarity_to_score(best_similarity), best_candidate
 
@@ -732,10 +756,13 @@ class MatchingService:
         return vector
 
     def _semantic_similarity_to_score(self, similarity: float) -> float:
-        if similarity < SEMANTIC_SKILL_MIN_SIMILARITY:
+        config = self.algorithm_config
+        if similarity < config.semantic_skill_min_similarity:
             return 0.0
-        scaled = 0.55 + (similarity - SEMANTIC_SKILL_MIN_SIMILARITY) * 2.5
-        return min(max(scaled, 0.55), SEMANTIC_SKILL_MAX_SCORE)
+        scaled = config.semantic_skill_base_score + (
+            similarity - config.semantic_skill_min_similarity
+        ) * config.semantic_skill_score_scale
+        return min(max(scaled, config.semantic_skill_base_score), config.semantic_skill_max_score)
 
     def _cosine_similarity(self, left: list[float], right: list[float]) -> float:
         dot_product = sum(a * b for a, b in zip(left, right))
@@ -867,13 +894,30 @@ class MatchingService:
     def _education_score(self, resume: ResumeProfile, constraints: JobEducationConstraints) -> float:
         weighted_components: list[tuple[float, float]] = []
         if constraints.min_degree:
-            weighted_components.append((self._minimum_degree_gate(resume, constraints), 0.5))
+            weighted_components.append(
+                (self._minimum_degree_gate(resume, constraints), self.algorithm_config.education_min_degree_weight)
+            )
         if constraints.prefer_degrees:
-            weighted_components.append((self._preferred_degree_score(resume, constraints.prefer_degrees), 0.2))
+            weighted_components.append(
+                (
+                    self._preferred_degree_score(resume, constraints.prefer_degrees),
+                    self.algorithm_config.education_prefer_degree_weight,
+                )
+            )
         if constraints.required_majors:
-            weighted_components.append((self._major_score(resume, constraints.required_majors, strict=True), 0.2))
+            weighted_components.append(
+                (
+                    self._major_score(resume, constraints.required_majors, strict=True),
+                    self.algorithm_config.education_required_major_weight,
+                )
+            )
         if constraints.preferred_majors:
-            weighted_components.append((self._major_score(resume, constraints.preferred_majors, strict=False), 0.1))
+            weighted_components.append(
+                (
+                    self._major_score(resume, constraints.preferred_majors, strict=False),
+                    self.algorithm_config.education_preferred_major_weight,
+                )
+            )
         return self._weighted_score(weighted_components, default=1.0)
 
     def _minimum_degree_gate(self, resume: ResumeProfile, constraints: JobEducationConstraints) -> float:

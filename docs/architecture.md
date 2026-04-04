@@ -2,6 +2,8 @@
 
 本文档描述当前 CareerMatch 的主要目录职责、核心接口以及真实数据链路。
 
+匹配评分与关键参数说明请参考 `docs/matching-algorithm.md`。
+
 ## 目录结构
 
 ```text

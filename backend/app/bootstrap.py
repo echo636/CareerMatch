@@ -66,6 +66,7 @@ def build_services(settings: Settings) -> ServiceContainer:
         resume_repository=resume_repository,
         embedding_client=embedding_client,
         vector_store=vector_store,
+        algorithm_config=settings.matching_algorithm,
     )
     gap_analysis_service = GapAnalysisService(
         resume_repository=resume_repository,
