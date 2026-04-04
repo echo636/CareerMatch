@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from math import sqrt
 
 from app.clients.embedding import BaseEmbeddingClient
 from app.clients.vector_store import BaseVectorStore
@@ -28,6 +29,14 @@ LEVEL_RANK = {
     "advanced": 3,
     "expert": 4,
 }
+
+TOTAL_WEIGHT_VECTOR = 0.30
+TOTAL_WEIGHT_SKILL = 0.15
+TOTAL_WEIGHT_EXPERIENCE = 0.40
+TOTAL_WEIGHT_EDUCATION = 0.15
+SKILL_VECTOR_NAMESPACE = "skill_terms"
+SEMANTIC_SKILL_MIN_SIMILARITY = 0.88
+SEMANTIC_SKILL_MAX_SCORE = 0.85
 
 DEGREE_RANK = {
     "high_school": 1,
@@ -85,6 +94,7 @@ class MatchingService:
 
         candidate_skill_index = self._build_candidate_skill_index(resume)
         candidate_terms = self._build_candidate_terms(resume)
+        skill_vector_cache: dict[str, list[float] | None] = {}
         matches: list[MatchResult] = []
         candidate_logs: list[dict[str, object]] = []
         filtered_out = 0
@@ -122,9 +132,18 @@ class MatchingService:
                 candidate_score,
                 candidate_skill_index,
                 candidate_terms,
+                skill_vector_cache,
             )
-            matched_skills = [skill for skill in job.skills if self._normalize_skill(skill) in candidate_skill_index]
-            missing_skills = [skill for skill in job.skills if self._normalize_skill(skill) not in candidate_skill_index]
+            matched_skills = [
+                skill
+                for skill in job.skills
+                if self._skill_match_exists(skill, candidate_skill_index, skill_vector_cache)
+            ]
+            missing_skills = [
+                skill
+                for skill in job.skills
+                if not self._skill_match_exists(skill, candidate_skill_index, skill_vector_cache)
+            ]
             tier = self._classify_tier(resume, job, breakdown)
             match = MatchResult(
                 job=job,
@@ -358,10 +377,11 @@ class MatchingService:
         vector_similarity: float,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         candidate_terms: set[str],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> MatchBreakdown:
-        required_scores = self._required_skill_scores(job, candidate_skill_index)
-        optional_scores = self._optional_group_scores(job, candidate_skill_index)
-        bonus_skill_score = self._bonus_skill_score(job, candidate_skill_index)
+        required_scores = self._required_skill_scores(job, candidate_skill_index, skill_vector_cache)
+        optional_scores = self._optional_group_scores(job, candidate_skill_index, skill_vector_cache)
+        bonus_skill_score = self._bonus_skill_score(job, candidate_skill_index, skill_vector_cache)
         skill_match = self._weighted_score(
             [
                 (self._average(required_scores), 0.6 if required_scores else 0.0),
@@ -386,10 +406,13 @@ class MatchingService:
         total = round(
             self._weighted_score(
                 [
-                    (vector_similarity, 0.2),
-                    (skill_match, 0.35),
-                    (experience_match, 0.25),
-                    (education_match, 0.1 if self._has_education_constraints(job.education_constraints) else 0.0),
+                    (vector_similarity, TOTAL_WEIGHT_VECTOR),
+                    (skill_match, TOTAL_WEIGHT_SKILL),
+                    (experience_match, TOTAL_WEIGHT_EXPERIENCE),
+                    (
+                        education_match,
+                        TOTAL_WEIGHT_EDUCATION if self._has_education_constraints(job.education_constraints) else 0.0,
+                    ),
                     # Salary is NOT included in total; it is used for tier classification only.
                 ]
             ),
@@ -521,9 +544,10 @@ class MatchingService:
         self,
         job: JobProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> list[float]:
         return [
-            self._score_required_skill(item, candidate_skill_index)
+            self._score_required_skill(item, candidate_skill_index, skill_vector_cache)
             for item in job.skill_requirements.required
         ]
 
@@ -531,11 +555,19 @@ class MatchingService:
         self,
         requirement: RequiredSkill,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
         candidate = candidate_skill_index.get(self._normalize_skill(requirement.name))
+        base_score = 1.0
         if candidate is None:
-            return 0.0
-        scores = [1.0]
+            base_score, candidate = self._best_semantic_skill_match(
+                requirement.name,
+                candidate_skill_index,
+                skill_vector_cache,
+            )
+            if candidate is None or base_score <= 0:
+                return 0.0
+        scores = [base_score]
         if requirement.level:
             scores.append(
                 self._level_score(
@@ -557,19 +589,24 @@ class MatchingService:
         self,
         job: JobProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> list[float]:
         scores: list[float] = []
         for group in job.skill_requirements.optional_groups:
-            scores.append(self._score_optional_group(group, candidate_skill_index))
+            scores.append(self._score_optional_group(group, candidate_skill_index, skill_vector_cache))
         return scores
 
     def _score_optional_group(
         self,
         group: OptionalSkillGroup,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
         skill_scores = sorted(
-            [self._score_optional_skill(skill, candidate_skill_index) for skill in group.skills or []],
+            [
+                self._score_optional_skill(skill, candidate_skill_index, skill_vector_cache)
+                for skill in group.skills or []
+            ],
             reverse=True,
         )
         required_count = max(group.min_required, 1)
@@ -582,24 +619,34 @@ class MatchingService:
         self,
         skill: OptionalSkill,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
         candidate = candidate_skill_index.get(self._normalize_skill(skill.name))
+        base_score = 1.0
         if candidate is None:
-            return 0.0
+            base_score, candidate = self._best_semantic_skill_match(
+                skill.name,
+                candidate_skill_index,
+                skill_vector_cache,
+            )
+            if candidate is None or base_score <= 0:
+                return 0.0
         if not skill.level:
-            return 1.0
-        return self._level_score(float(candidate.get("level_rank") or 0.0), skill.level)
+            return base_score
+        level_score = self._level_score(float(candidate.get("level_rank") or 0.0), skill.level)
+        return (base_score + level_score) / 2
 
     def _bonus_skill_score(
         self,
         job: JobProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
         weighted_components: list[tuple[float, float]] = []
         for skill in job.skill_requirements.bonus:
             weighted_components.append(
                 (
-                    self._score_bonus_skill(skill, candidate_skill_index),
+                    self._score_bonus_skill(skill, candidate_skill_index, skill_vector_cache),
                     float(skill.weight or 1),
                 )
             )
@@ -609,8 +656,94 @@ class MatchingService:
         self,
         skill: BonusSkill,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
-        return 1.0 if self._normalize_skill(skill.name) in candidate_skill_index else 0.0
+        exact_match = self._normalize_skill(skill.name) in candidate_skill_index
+        if exact_match:
+            return 1.0
+        semantic_score, _ = self._best_semantic_skill_match(skill.name, candidate_skill_index, skill_vector_cache)
+        return semantic_score
+
+    def _skill_match_exists(
+        self,
+        skill_name: str,
+        candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
+    ) -> bool:
+        if self._normalize_skill(skill_name) in candidate_skill_index:
+            return True
+        semantic_score, _ = self._best_semantic_skill_match(skill_name, candidate_skill_index, skill_vector_cache)
+        return semantic_score > 0
+
+    def _best_semantic_skill_match(
+        self,
+        skill_name: str,
+        candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
+    ) -> tuple[float, dict[str, float | str | None] | None]:
+        requirement_vector = self._ensure_skill_vector(skill_name, skill_vector_cache)
+        if requirement_vector is None:
+            return 0.0, None
+
+        best_similarity = 0.0
+        best_candidate: dict[str, float | str | None] | None = None
+        for candidate in candidate_skill_index.values():
+            candidate_name = candidate.get("name")
+            if not isinstance(candidate_name, str) or not candidate_name.strip():
+                continue
+            candidate_vector = self._ensure_skill_vector(candidate_name, skill_vector_cache)
+            if candidate_vector is None:
+                continue
+            similarity = self._cosine_similarity(requirement_vector, candidate_vector)
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_candidate = candidate
+
+        if best_candidate is None or best_similarity < SEMANTIC_SKILL_MIN_SIMILARITY:
+            return 0.0, None
+        return self._semantic_similarity_to_score(best_similarity), best_candidate
+
+    def _ensure_skill_vector(
+        self,
+        skill_name: str,
+        skill_vector_cache: dict[str, list[float] | None],
+    ) -> list[float] | None:
+        normalized = self._normalize_skill(skill_name)
+        if not normalized:
+            return None
+        if normalized in skill_vector_cache:
+            return skill_vector_cache[normalized]
+
+        payload_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        cached = self.vector_store.get(SKILL_VECTOR_NAMESPACE, normalized)
+        if cached is not None and cached.payload_hash == payload_hash:
+            skill_vector_cache[normalized] = cached.vector
+            return cached.vector
+
+        try:
+            vector = self.embedding_client.embed_text(normalized)
+        except Exception as exc:
+            logger.warning("matching.skill_vector.failed skill=%s error=%s", normalized, exc)
+            skill_vector_cache[normalized] = None
+            return None
+
+        self.vector_store.upsert(SKILL_VECTOR_NAMESPACE, normalized, vector, payload_hash)
+        skill_vector_cache[normalized] = vector
+        return vector
+
+    def _semantic_similarity_to_score(self, similarity: float) -> float:
+        if similarity < SEMANTIC_SKILL_MIN_SIMILARITY:
+            return 0.0
+        scaled = 0.55 + (similarity - SEMANTIC_SKILL_MIN_SIMILARITY) * 2.5
+        return min(max(scaled, 0.55), SEMANTIC_SKILL_MAX_SCORE)
+
+    def _cosine_similarity(self, left: list[float], right: list[float]) -> float:
+        dot_product = sum(a * b for a, b in zip(left, right))
+        left_norm = sqrt(sum(a * a for a in left))
+        right_norm = sqrt(sum(b * b for b in right))
+        if left_norm == 0 or right_norm == 0:
+            return 0.0
+        return dot_product / (left_norm * right_norm)
 
     def _core_experience_scores(
         self,

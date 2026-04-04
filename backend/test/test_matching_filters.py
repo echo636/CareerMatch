@@ -23,6 +23,8 @@ from app.domain.models import (
     MatchFilters,
     ResumeBasicInfo,
     ResumeProfile,
+    ResumeSkill,
+    RequiredSkill,
     SalaryRange,
 )
 from app.repositories.in_memory import JobRepository, ResumeRepository
@@ -34,6 +36,15 @@ from app.services.matching import MatchingService
 class StaticEmbeddingClient(BaseEmbeddingClient):
     def embed_text(self, text: str, dimensions: int | None = None) -> list[float]:
         return [1.0, 0.0]
+
+
+class MappingEmbeddingClient(BaseEmbeddingClient):
+    def __init__(self, mapping: dict[str, list[float]]) -> None:
+        self.mapping = {key.lower(): value for key, value in mapping.items()}
+
+    def embed_text(self, text: str, dimensions: int | None = None) -> list[float]:
+        normalized = text.strip().lower()
+        return list(self.mapping.get(normalized, [1.0, 0.0]))
 
 
 class FakeLLMClient(BaseLLMClient):
@@ -209,6 +220,84 @@ class MatchingFiltersTestCase(unittest.TestCase):
         self.assertEqual(job.filter_facets.max_experience_years, 1.0)
         self.assertIsNotNone(job.filter_facets.posted_at)
         self.assertIsNotNone(job.filter_facets.posted_days_ago)
+
+    def test_semantic_skill_match_can_cover_non_alias_skill_names(self) -> None:
+        embedding_client = MappingEmbeddingClient(
+            {
+                "prompt engineering": [1.0, 0.0],
+                "prompt design": [0.99, 0.01],
+                "java": [0.0, 1.0],
+            }
+        )
+        job_repository = JobRepository()
+        resume_repository = ResumeRepository()
+        vector_store = InMemoryVectorStore()
+        matching_service = MatchingService(
+            job_repository=job_repository,
+            resume_repository=resume_repository,
+            embedding_client=embedding_client,
+            vector_store=vector_store,
+        )
+
+        resume = ResumeProfile(
+            id="resume-semantic",
+            basic_info=ResumeBasicInfo(name="Semantic Candidate", work_years=2),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Prompt Engineering")],
+            tags=[],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="semantic resume",
+        )
+        resume_repository.save(resume)
+
+        semantic_job = self._make_job(
+            job_id="job-semantic",
+            title="AI Product Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["algorithm_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=1,
+            max_years=3,
+        )
+        semantic_job.skill_requirements = JobSkillRequirements(
+            required=[RequiredSkill(name="Prompt Design")],
+            optional_groups=[],
+            bonus=[],
+        )
+
+        unrelated_job = self._make_job(
+            job_id="job-unrelated",
+            title="Backend Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=1,
+            max_years=3,
+        )
+        unrelated_job.skill_requirements = JobSkillRequirements(
+            required=[RequiredSkill(name="Java")],
+            optional_groups=[],
+            bonus=[],
+        )
+
+        job_repository.save_many([semantic_job, unrelated_job])
+        vector_store.upsert("jobs", semantic_job.id, [1.0, 0.0], "semantic")
+        vector_store.upsert("jobs", unrelated_job.id, [0.95, 0.05], "unrelated")
+
+        matches = matching_service.recommend(resume.id, top_k=2)
+
+        self.assertEqual(matches[0].job.id, semantic_job.id)
+        self.assertGreater(matches[0].breakdown.skill_match, 0.5)
+        self.assertIn("Prompt Design", matches[0].matched_skills)
+        self.assertNotIn("Prompt Design", matches[0].missing_skills)
 
     def _make_job(
         self,
