@@ -136,6 +136,18 @@ CITY_REGION_GROUPS: tuple[set[str], ...] = (
     {"深圳", "广州", "东莞", "佛山", "珠海", "惠州"},
 )
 
+CLOSE_CITY_PAIRS: set[frozenset[str]] = {
+    frozenset({"上海", "杭州"}),
+    frozenset({"上海", "苏州"}),
+    frozenset({"上海", "昆山"}),
+    frozenset({"深圳", "广州"}),
+    frozenset({"深圳", "东莞"}),
+    frozenset({"广州", "佛山"}),
+    frozenset({"北京", "天津"}),
+    frozenset({"杭州", "宁波"}),
+    frozenset({"南京", "苏州"}),
+}
+
 logger = get_logger("services.matching")
 score_logger = get_score_logger()
 
@@ -773,10 +785,12 @@ class MatchingService:
         searchable_text = f"{job.title} {job.summary}".lower()
         if not any(keyword.lower() in searchable_text for keyword in SPECIALIZED_ROLE_KEYWORDS):
             return 1.0
-        if title_skill_alignment > 0 and domain_match >= 0.65:
+        if title_skill_alignment >= 0.5 and domain_match >= 0.65:
             return 1.0
-        if title_skill_alignment > 0 and domain_match >= 0.5:
+        if title_skill_alignment >= 0.5 and domain_match >= 0.5:
             return 0.9
+        if title_skill_alignment > 0 and domain_match >= 0.5:
+            return 0.85
         return self.algorithm_config.specialized_role_penalty
 
     def _underpay_location_penalty(
@@ -935,7 +949,7 @@ class MatchingService:
     def _location_match_score(self, resume: ResumeProfile, job: JobProfile) -> float:
         target_cities = self._resume_target_cities(resume)
         if "remote" in job.filter_facets.work_modes:
-            return 0.9
+            return 1.0
         if not target_cities:
             return 0.5
         job_locations = self._job_location_tokens(job)
@@ -943,9 +957,18 @@ class MatchingService:
             return 0.5
         if target_cities & job_locations:
             return 1.0
+        if self._are_close_cities(target_cities, job_locations):
+            return 0.55
         if self._share_city_region(target_cities, job_locations):
-            return 0.7
-        return 0.1
+            return 0.35
+        return 0.10
+
+    def _are_close_cities(self, left: set[str], right: set[str]) -> bool:
+        for city_a in left:
+            for city_b in right:
+                if frozenset({city_a, city_b}) in CLOSE_CITY_PAIRS:
+                    return True
+        return False
 
     def _domain_term_overlap_score(self, job: JobProfile, candidate_terms: set[str]) -> float:
         if not candidate_terms:
