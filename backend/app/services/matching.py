@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from math import sqrt
+import re
 
 from app.clients.embedding import BaseEmbeddingClient
 from app.clients.vector_store import BaseVectorStore
@@ -20,6 +21,7 @@ from app.domain.models import (
     OptionalSkillGroup,
     RequiredSkill,
     ResumeProfile,
+    is_placeholder_text,
 )
 from app.repositories.in_memory import JobRepository, ResumeRepository
 from app.services.skill_aliases import normalize_skill_name
@@ -32,6 +34,7 @@ LEVEL_RANK = {
 }
 
 SKILL_VECTOR_NAMESPACE = "skill_terms"
+DOMAIN_VECTOR_NAMESPACE = "domain_terms"
 
 DEGREE_RANK = {
     "high_school": 1,
@@ -51,6 +54,87 @@ DEGREE_RANK = {
     "doctor": 5,
     "博士": 5,
 }
+
+TITLE_PRIMARY_SKILL_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("java", ("java",)),
+    ("python", ("python",)),
+    ("go", ("golang", "go", "go语言")),
+    ("php", ("php",)),
+    ("c++", ("c++", "cpp")),
+    ("c#", ("c#", "csharp", ".net", "dotnet")),
+    ("javascript", ("javascript", "js", "前端")),
+    ("typescript", ("typescript", "ts")),
+    ("react", ("react",)),
+    ("vue", ("vue",)),
+    ("flutter", ("flutter",)),
+    ("android", ("android",)),
+    ("ios", ("ios", "swift", "objective-c")),
+    ("kotlin", ("kotlin",)),
+    ("llm", ("llm", "大模型", "ai", "人工智能")),
+)
+
+SPECIALIZED_ROLE_KEYWORDS = (
+    "高级",
+    "专家",
+    "核心自研",
+    "大模型",
+    "银行",
+    "保险",
+    "交易",
+    "稳定性",
+    "高并发",
+    "分布式",
+    "云原生",
+    "平台方向",
+)
+
+LEAD_ROLE_KEYWORDS = (
+    "主管",
+    "主程",
+    "经理",
+    "总监",
+    "负责人",
+    "leader",
+    "架构师",
+)
+
+GENERIC_ROLE_PATTERNS = (
+    "前端，后端，测试岗位均有",
+    "前端、后端，测试岗位均有",
+    "前端/后端/测试",
+    "前后端开发/测试",
+    "前端后端测试",
+    "多方向",
+    "均有",
+)
+
+RESUME_ROLE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("frontend_engineer", ("前端", "frontend", "react", "vue", "javascript", "typescript", "web前端")),
+    ("backend_engineer", ("后端", "backend", "server", "php", "laravel", "python", "java", "spring", "golang", "go语言")),
+    ("fullstack_engineer", ("全栈", "full stack", "fullstack")),
+    ("algorithm_engineer", ("算法", "algorithm", "机器学习", "machine learning", "深度学习", "llm", "大模型", "nlp", "cv")),
+    ("data_engineer", ("数据", "data", "etl", "数仓", "大数据")),
+    ("mobile_engineer", ("android", "ios", "flutter", "uniapp", "react native", "小程序", "app")),
+    ("testing_engineer", ("测试", "qa", "test", "testing")),
+)
+
+STACK_TRANSITION_BRIDGES: dict[str, dict[str, float]] = {
+    "go": {"php": 0.72, "laravel": 0.74, "python": 0.58, "java": 0.60, "mysql": 0.18, "redis": 0.18},
+    "python": {"php": 0.68, "laravel": 0.70, "java": 0.35, "go": 0.52, "mysql": 0.20, "redis": 0.20},
+    "java": {"php": 0.42, "laravel": 0.44, "python": 0.35, "go": 0.55, "mysql": 0.18, "redis": 0.18},
+    "php": {"python": 0.62, "go": 0.58, "java": 0.40, "mysql": 0.22, "redis": 0.22},
+    "react": {"vue": 0.90, "javascript": 0.92, "typescript": 0.94, "uniapp": 0.58, "flutter": 0.38},
+    "vue": {"react": 0.88, "javascript": 0.92, "typescript": 0.94, "uniapp": 0.74, "flutter": 0.36},
+    "flutter": {"uniapp": 0.70, "android": 0.58, "ios": 0.52, "react": 0.42, "vue": 0.34},
+    "javascript": {"typescript": 0.96, "vue": 0.92, "react": 0.92},
+    "typescript": {"javascript": 0.96, "vue": 0.92, "react": 0.92},
+}
+
+CITY_REGION_GROUPS: tuple[set[str], ...] = (
+    {"上海", "杭州", "苏州", "南京", "无锡", "宁波", "嘉兴", "绍兴", "湖州", "常州", "昆山"},
+    {"北京", "天津", "石家庄", "廊坊"},
+    {"深圳", "广州", "东莞", "佛山", "珠海", "惠州"},
+)
 
 logger = get_logger("services.matching")
 score_logger = get_score_logger()
@@ -92,6 +176,7 @@ class MatchingService:
         candidate_skill_index = self._build_candidate_skill_index(resume)
         candidate_terms = self._build_candidate_terms(resume)
         skill_vector_cache: dict[str, list[float] | None] = {}
+        domain_vector_cache: dict[str, list[float] | None] = {}
         matches: list[MatchResult] = []
         candidate_logs: list[dict[str, object]] = []
         filtered_out = 0
@@ -130,6 +215,7 @@ class MatchingService:
                 candidate_skill_index,
                 candidate_terms,
                 skill_vector_cache,
+                domain_vector_cache,
             )
             matched_skills = [
                 skill
@@ -173,7 +259,7 @@ class MatchingService:
             )
 
         matches.sort(key=lambda item: item.breakdown.total, reverse=True)
-        result = matches[:top_k]
+        result = self._diversify_matches(matches, top_k)
         logger.info(
             "matching.completed resume_id=%s recalled=%s filtered_out=%s matched=%s returned=%s top_job=%s filters=%s",
             resume_id,
@@ -217,6 +303,8 @@ class MatchingService:
             return False, "salary_far_above_budget"
         if self._direction_mismatch(resume, job):
             return False, "direction_mismatch"
+        if self._clear_role_mismatch(resume, job):
+            return False, "role_mismatch"
         return True, "passed"
 
     def _serialize_filters(self, filters: MatchFilters | None) -> dict[str, object] | None:
@@ -345,6 +433,23 @@ class MatchingService:
             return False
         return len(resume_tags & job_tags) == 0
 
+    def _clear_role_mismatch(self, resume: ResumeProfile, job: JobProfile) -> bool:
+        candidate_roles = self._resume_role_categories(resume)
+        job_roles = {value.lower() for value in job.filter_facets.role_categories}
+
+        candidate_frontend = "frontend_engineer" in candidate_roles
+        candidate_backend = bool(candidate_roles & {"backend_engineer", "fullstack_engineer"})
+        job_frontend = "frontend_engineer" in job_roles
+        job_backend = bool(job_roles & {"backend_engineer", "fullstack_engineer"})
+
+        if candidate_frontend and not candidate_backend and job_backend and not job_frontend:
+            return True
+        if "algorithm_engineer" in job_roles and "algorithm_engineer" not in candidate_roles:
+            return True
+        if "data_engineer" in job_roles and not (candidate_roles & {"data_engineer", "backend_engineer", "fullstack_engineer"}):
+            return True
+        return False
+
     def _dynamic_recall_size(self, top_k: int, job_count: int, filters: MatchFilters | None = None) -> int:
         """Scale recall multiplier based on job pool size."""
         config = self.algorithm_config
@@ -380,14 +485,17 @@ class MatchingService:
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         candidate_terms: set[str],
         skill_vector_cache: dict[str, list[float] | None],
+        domain_vector_cache: dict[str, list[float] | None],
     ) -> MatchBreakdown:
         required_scores = self._required_skill_scores(job, candidate_skill_index, skill_vector_cache)
         optional_scores = self._optional_group_scores(job, candidate_skill_index, skill_vector_cache)
         bonus_skill_score = self._bonus_skill_score(job, candidate_skill_index, skill_vector_cache)
+        required_coverage = self._average(required_scores)
+        transition_score = self._stack_transition_score(resume, job, candidate_skill_index)
         skill_match = self._weighted_score(
             [
                 (
-                    self._average(required_scores),
+                    required_coverage,
                     self.algorithm_config.skill_required_weight if required_scores else 0.0,
                 ),
                 (
@@ -398,8 +506,12 @@ class MatchingService:
                     bonus_skill_score,
                     self.algorithm_config.skill_bonus_weight if job.skill_requirements.bonus else 0.0,
                 ),
-            ]
+            ],
+            default=0.5,
         )
+        title_skill_alignment = self._title_primary_skill_alignment(job, candidate_skill_index, skill_vector_cache)
+        if title_skill_alignment == 0.0:
+            skill_match = max(min(skill_match * 0.25, 0.10), round(transition_score * 0.6, 4))
 
         core_experience_scores = self._core_experience_scores(resume, job, candidate_skill_index, candidate_terms)
         bonus_experience_score = self._bonus_experience_score(resume, job, candidate_skill_index, candidate_terms)
@@ -420,11 +532,14 @@ class MatchingService:
                     if job.experience_requirements.min_total_years is not None
                     else 0.0,
                 ),
-            ]
+            ],
+            default=0.5,
         )
 
         education_match = self._education_score(resume, job.education_constraints)
         salary_match = self._salary_score(resume, job)
+        domain_match = self._domain_relevance_score(resume, job, candidate_terms, domain_vector_cache)
+        location_match = self._location_match_score(resume, job)
         total = round(
             self._weighted_score(
                 [
@@ -437,8 +552,44 @@ class MatchingService:
                         if self._has_education_constraints(job.education_constraints)
                         else 0.0,
                     ),
-                    # Salary is NOT included in total; it is used for tier classification only.
+                    (domain_match, self.algorithm_config.total_weight_domain),
+                    (location_match, self.algorithm_config.total_weight_location),
+                    (
+                        salary_match,
+                        self.algorithm_config.total_weight_salary if job.has_salary_reference else 0.0,
+                    ),
                 ]
+            ),
+            4,
+        )
+        total = round(
+            total
+            * self._hard_skill_penalty(job, required_scores, candidate_skill_index, skill_vector_cache),
+            4,
+        )
+        total = round(
+            total
+            * self._specialized_role_penalty(job, domain_match, title_skill_alignment),
+            4,
+        )
+        total = round(
+            total
+            * self._underpay_location_penalty(resume, job, location_match),
+            4,
+        )
+        total = round(
+            total
+            * self._lead_role_penalty(job, title_skill_alignment, transition_score, location_match, salary_match),
+            4,
+        )
+        total = round(
+            self._cap_zero_skill_transition_mismatch(
+                total,
+                job,
+                skill_match,
+                required_coverage,
+                title_skill_alignment,
+                transition_score,
             ),
             4,
         )
@@ -527,6 +678,8 @@ class MatchingService:
         level: str | None,
         years: float | None,
     ) -> None:
+        if is_placeholder_text(name):
+            return
         normalized = self._normalize_skill(name)
         if not normalized:
             return
@@ -560,9 +713,410 @@ class MatchingService:
 
     def _add_terms(self, target: set[str], values: list[str]) -> None:
         for value in values:
+            if is_placeholder_text(value):
+                continue
             normalized = value.strip().lower()
             if normalized:
                 target.add(normalized)
+
+    def _hard_skill_penalty(
+        self,
+        job: JobProfile,
+        required_scores: list[float],
+        candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
+    ) -> float:
+        config = self.algorithm_config
+        penalty = self._title_skill_penalty(job, candidate_skill_index, skill_vector_cache)
+        if job.skill_requirements.required and required_scores:
+            primary_scores = required_scores[: min(2, len(required_scores))]
+            primary_coverage = self._average(primary_scores)
+            required_coverage = self._average(required_scores)
+            if primary_coverage < config.hard_skill_primary_threshold:
+                penalty *= config.hard_skill_primary_penalty
+            if required_coverage < config.hard_skill_required_threshold:
+                penalty *= config.hard_skill_required_penalty
+        return penalty
+
+    def _title_skill_penalty(
+        self,
+        job: JobProfile,
+        candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
+    ) -> float:
+        alignment = self._title_primary_skill_alignment(job, candidate_skill_index, skill_vector_cache)
+        penalty_floor = self.algorithm_config.title_skill_mismatch_penalty
+        return round(penalty_floor + ((1.0 - penalty_floor) * alignment), 4)
+
+    def _title_primary_skill_alignment(
+        self,
+        job: JobProfile,
+        candidate_skill_index: dict[str, dict[str, float | str | None]],
+        skill_vector_cache: dict[str, list[float] | None],
+    ) -> float:
+        title_primary_skills = self._extract_title_primary_skills(job.title)
+        if not title_primary_skills:
+            return 1.0
+        matched = sum(
+            1
+            for skill_name in title_primary_skills
+            if self._skill_match_exists(skill_name, candidate_skill_index, skill_vector_cache)
+        )
+        return matched / len(title_primary_skills)
+
+    def _specialized_role_penalty(
+        self,
+        job: JobProfile,
+        domain_match: float,
+        title_skill_alignment: float,
+    ) -> float:
+        searchable_text = f"{job.title} {job.summary}".lower()
+        if not any(keyword.lower() in searchable_text for keyword in SPECIALIZED_ROLE_KEYWORDS):
+            return 1.0
+        if title_skill_alignment > 0 and domain_match >= 0.65:
+            return 1.0
+        if title_skill_alignment > 0 and domain_match >= 0.5:
+            return 0.9
+        return self.algorithm_config.specialized_role_penalty
+
+    def _underpay_location_penalty(
+        self,
+        resume: ResumeProfile,
+        job: JobProfile,
+        location_match: float,
+    ) -> float:
+        if not job.has_salary_reference or resume.expected_salary.min <= 0:
+            return 1.0
+        ceiling_ratio = job.salary_range.max / max(resume.expected_salary.min, 1)
+        if ceiling_ratio >= 1.0:
+            return 1.0
+        if "remote" in job.filter_facets.work_modes:
+            return 1.0
+        if ceiling_ratio < 0.8 and location_match < 1.0:
+            return 0.72
+        if ceiling_ratio < 0.8:
+            return 0.86
+        if ceiling_ratio < 0.9 and location_match < 0.7:
+            return 0.88
+        return 1.0
+
+    def _lead_role_penalty(
+        self,
+        job: JobProfile,
+        title_skill_alignment: float,
+        transition_score: float,
+        location_match: float,
+        salary_match: float,
+    ) -> float:
+        title = job.title.lower()
+        if not any(keyword in title for keyword in LEAD_ROLE_KEYWORDS):
+            return 1.0
+        if title_skill_alignment >= 1.0:
+            return 1.0
+        if transition_score >= 0.75 and location_match >= 1.0 and salary_match >= 0.9:
+            return 1.0
+        if location_match < 1.0 and salary_match < 0.9:
+            return 0.72
+        if location_match < 0.7 or salary_match < 0.8:
+            return 0.82
+        return 0.9
+
+    def _resume_role_categories(self, resume: ResumeProfile) -> set[str]:
+        searchable_parts = [
+            resume.basic_info.current_title or "",
+            resume.summary,
+            resume.raw_text,
+            " ".join(resume.skill_names[:16]),
+            " ".join(resume.project_keywords[:16]),
+        ]
+        searchable_text = " ".join(part.lower() for part in searchable_parts if part)
+        matched = {
+            category
+            for category, keywords in RESUME_ROLE_KEYWORDS
+            if any(keyword in searchable_text for keyword in keywords)
+        }
+        if "fullstack_engineer" in matched:
+            matched.add("backend_engineer")
+            matched.add("frontend_engineer")
+        return matched
+
+    def _stack_transition_score(
+        self,
+        resume: ResumeProfile,
+        job: JobProfile,
+        candidate_skill_index: dict[str, dict[str, float | str | None]],
+    ) -> float:
+        target_primary_skills = set(self._extract_title_primary_skills(job.title))
+        target_primary_skills.update(
+            self._normalize_skill(item.name)
+            for item in job.skill_requirements.required[:3]
+            if self._normalize_skill(item.name) in STACK_TRANSITION_BRIDGES
+        )
+        if not target_primary_skills:
+            return 0.0
+
+        candidate_skill_keys = set(candidate_skill_index)
+        candidate_roles = self._resume_role_categories(resume)
+        if "fullstack_engineer" in candidate_roles:
+            candidate_roles.add("backend_engineer")
+
+        best_score = 0.0
+        for target_skill in target_primary_skills:
+            if target_skill in candidate_skill_keys:
+                return 1.0
+            bridge_scores = [
+                bridge_score
+                for source_skill, bridge_score in STACK_TRANSITION_BRIDGES.get(target_skill, {}).items()
+                if source_skill in candidate_skill_keys
+            ]
+            score = max(bridge_scores, default=0.0)
+            if target_skill in {"go", "python", "php", "java"} and "backend_engineer" in candidate_roles:
+                score = max(score, 0.38)
+            if target_skill in {"react", "vue", "javascript", "typescript"} and (
+                candidate_roles & {"frontend_engineer", "fullstack_engineer", "mobile_engineer"}
+            ):
+                score = max(score, 0.42)
+            best_score = max(best_score, score)
+        return best_score
+
+    def _cap_zero_skill_transition_mismatch(
+        self,
+        total: float,
+        job: JobProfile,
+        skill_match: float,
+        required_coverage: float,
+        title_skill_alignment: float,
+        transition_score: float,
+    ) -> float:
+        job_roles = {value.lower() for value in job.filter_facets.role_categories}
+        if title_skill_alignment > 0 or transition_score >= 0.35:
+            return total
+        if required_coverage > 0.15 or skill_match > 0.18:
+            return total
+        if job_roles & {"algorithm_engineer", "data_engineer"}:
+            return min(total, 0.08)
+        if any(keyword.lower() in f"{job.title} {job.summary}".lower() for keyword in SPECIALIZED_ROLE_KEYWORDS):
+            return min(total, 0.10)
+        return min(total, 0.12)
+
+    def _extract_title_primary_skills(self, title: str) -> list[str]:
+        normalized_title = title.strip().lower()
+        if not normalized_title:
+            return []
+        matched: list[str] = []
+        for canonical, patterns in TITLE_PRIMARY_SKILL_PATTERNS:
+            if any(pattern in normalized_title for pattern in patterns):
+                matched.append(canonical)
+        return matched
+
+    def _domain_relevance_score(
+        self,
+        resume: ResumeProfile,
+        job: JobProfile,
+        candidate_terms: set[str],
+        domain_vector_cache: dict[str, list[float] | None],
+    ) -> float:
+        term_overlap = self._domain_term_overlap_score(job, candidate_terms)
+        resume_payload = self._resume_domain_payload(resume)
+        job_payload = self._job_domain_payload(job)
+        if not resume_payload or not job_payload:
+            return max(term_overlap, 0.5 if term_overlap == 0 else term_overlap)
+
+        resume_vector = self._ensure_aux_text_vector(DOMAIN_VECTOR_NAMESPACE, resume_payload, domain_vector_cache)
+        job_vector = self._ensure_aux_text_vector(DOMAIN_VECTOR_NAMESPACE, job_payload, domain_vector_cache)
+        if resume_vector is None or job_vector is None:
+            return max(term_overlap, 0.5 if term_overlap == 0 else term_overlap)
+
+        semantic_score = max(0.0, self._cosine_similarity(resume_vector, job_vector))
+        if term_overlap == 0:
+            return max(semantic_score, 0.5)
+        return max(term_overlap, semantic_score)
+
+    def _location_match_score(self, resume: ResumeProfile, job: JobProfile) -> float:
+        target_cities = self._resume_target_cities(resume)
+        if "remote" in job.filter_facets.work_modes:
+            return 0.9
+        if not target_cities:
+            return 0.5
+        job_locations = self._job_location_tokens(job)
+        if not job_locations:
+            return 0.5
+        if target_cities & job_locations:
+            return 1.0
+        if self._share_city_region(target_cities, job_locations):
+            return 0.7
+        return 0.1
+
+    def _domain_term_overlap_score(self, job: JobProfile, candidate_terms: set[str]) -> float:
+        if not candidate_terms:
+            return 0.0
+        job_terms: set[str] = set()
+        self._add_terms(job_terms, job.project_keywords)
+        self._add_terms(job_terms, [tag.name for tag in job.tags if (tag.category or "").lower() in {"domain", "industry", "project"}])
+        self._add_terms(job_terms, [job.title, job.company])
+        if not job_terms:
+            return 0.0
+
+        exact_hits = len(job_terms & candidate_terms)
+        if exact_hits > 0:
+            denominator = max(1, min(len(job_terms), 4))
+            return min(exact_hits / denominator, 1.0)
+
+        summary_text = f"{job.title} {job.summary}".lower()
+        fuzzy_hits = sum(
+            1
+            for term in candidate_terms
+            if len(term) >= 2 and (term in summary_text or summary_text.find(term) != -1)
+        )
+        if fuzzy_hits == 0:
+            return 0.0
+        denominator = max(1, min(len(candidate_terms), 4))
+        return min((fuzzy_hits / denominator) * 0.8, 0.8)
+
+    def _resume_domain_payload(self, resume: ResumeProfile) -> str:
+        parts: list[str] = [resume.summary]
+        parts.extend(resume.project_keywords[:12])
+        parts.extend(project.name for project in resume.projects[:6] if project.name)
+        parts.extend(project.description or "" for project in resume.projects[:4] if project.description)
+        parts.extend(experience.title or "" for experience in resume.work_experiences[:4] if experience.title)
+        parts.extend(experience.industry or "" for experience in resume.work_experiences[:4] if experience.industry)
+        return " ".join(part for part in parts if part).strip()
+
+    def _job_domain_payload(self, job: JobProfile) -> str:
+        parts: list[str] = [job.title, job.summary, job.company]
+        parts.extend(job.project_keywords[:12])
+        parts.extend(tag.name for tag in job.tags[:12] if tag.name)
+        parts.extend((job.basic_info.responsibilities or [])[:4])
+        return " ".join(part for part in parts if part).strip()
+
+    def _resume_target_cities(self, resume: ResumeProfile) -> set[str]:
+        cities: set[str] = set()
+        if resume.basic_info.current_city:
+            cities.update(self._split_city_tokens(resume.basic_info.current_city))
+        if resume.raw_text:
+            for label in ("期望城市", "意向城市"):
+                match = re.search(rf"{label}[:：]\s*([^\n]+)", resume.raw_text)
+                if match:
+                    cities.update(self._split_city_tokens(match.group(1)))
+        return cities
+
+    def _job_location_tokens(self, job: JobProfile) -> set[str]:
+        return self._split_city_tokens(job.basic_info.location)
+
+    def _split_city_tokens(self, value: str | None) -> set[str]:
+        if value is None:
+            return set()
+        values: list[str]
+        if isinstance(value, (list, tuple, set)):
+            values = [str(item) for item in value if str(item).strip()]
+        else:
+            values = [str(value)]
+        tokens: set[str] = set()
+        for item in values:
+            text = item.strip()
+            if not text:
+                continue
+            candidates = re.split(r"[,，/|、;；\s\[\]'\"()\-·]+", text)
+            for candidate in candidates:
+                normalized = candidate.strip()
+                if not normalized:
+                    continue
+                if normalized.endswith("市") and len(normalized) > 1:
+                    normalized = normalized[:-1]
+                tokens.add(normalized)
+        return tokens
+
+    def _share_city_region(self, left: set[str], right: set[str]) -> bool:
+        for group in CITY_REGION_GROUPS:
+            if left & group and right & group:
+                return True
+        return False
+
+    def _diversify_matches(self, matches: list[MatchResult], top_k: int) -> list[MatchResult]:
+        selected: list[MatchResult] = []
+        remaining = list(matches)
+        seen_company_title: set[tuple[str, str]] = set()
+        seen_companies: dict[str, int] = {}
+        seen_titles: dict[str, int] = {}
+        seen_templates: dict[str, int] = {}
+
+        while remaining and len(selected) < top_k:
+            best_index = 0
+            best_score = float("-inf")
+            for index, candidate in enumerate(remaining):
+                score = candidate.breakdown.total
+                company = candidate.job.company.strip().lower()
+                title = candidate.job.title.strip().lower()
+                template = self._job_template_signature(candidate.job)
+                if (company, title) in seen_company_title:
+                    score -= 0.05
+                score -= seen_companies.get(company, 0) * 0.02
+                score -= seen_titles.get(title, 0) * 0.015
+                score -= seen_templates.get(template, 0) * 0.045
+                score -= self._generic_job_penalty(candidate.job)
+                if score > best_score:
+                    best_score = score
+                    best_index = index
+
+            chosen = remaining.pop(best_index)
+            selected.append(chosen)
+            company = chosen.job.company.strip().lower()
+            title = chosen.job.title.strip().lower()
+            template = self._job_template_signature(chosen.job)
+            seen_company_title.add((company, title))
+            seen_companies[company] = seen_companies.get(company, 0) + 1
+            seen_titles[title] = seen_titles.get(title, 0) + 1
+            seen_templates[template] = seen_templates.get(template, 0) + 1
+
+        return selected
+
+    def _job_template_signature(self, job: JobProfile) -> str:
+        summary = " ".join((job.basic_info.responsibilities or [])[:2]) or job.summary
+        normalized_title = re.sub(r"\d+", "", job.title.strip().lower())
+        normalized_summary = re.sub(r"\s+", " ", summary.strip().lower())
+        normalized_summary = re.sub(r"\d+", "", normalized_summary)
+        summary_head = normalized_summary[:120]
+        return f"{job.company.strip().lower()}::{normalized_title}::{summary_head}"
+
+    def _generic_job_penalty(self, job: JobProfile) -> float:
+        searchable_text = f"{job.title} {job.summary}".lower()
+        if any(pattern in searchable_text for pattern in GENERIC_ROLE_PATTERNS):
+            return 0.03
+        if "软件开发工程师" in searchable_text and any(
+            token in searchable_text for token in ("前端", "后端", "测试")
+        ):
+            return 0.02
+        return 0.0
+
+    def _ensure_aux_text_vector(
+        self,
+        namespace: str,
+        payload: str,
+        cache: dict[str, list[float] | None],
+    ) -> list[float] | None:
+        normalized = " ".join(payload.split()).strip().lower()
+        if not normalized:
+            return None
+        payload_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        cache_key = f"{namespace}:{payload_hash}"
+        if cache_key in cache:
+            return cache[cache_key]
+
+        cached = self.vector_store.get(namespace, payload_hash)
+        if cached is not None and cached.payload_hash == payload_hash:
+            cache[cache_key] = cached.vector
+            return cached.vector
+
+        try:
+            vector = self.embedding_client.embed_text(normalized)
+        except Exception as exc:
+            logger.warning("matching.aux_vector.failed namespace=%s error=%s", namespace, exc)
+            cache[cache_key] = None
+            return None
+
+        self.vector_store.upsert(namespace, payload_hash, vector, payload_hash)
+        cache[cache_key] = vector
+        return vector
 
     def _required_skill_scores(
         self,
@@ -966,13 +1520,33 @@ class MatchingService:
     def _salary_score(self, resume: ResumeProfile, job: JobProfile) -> float:
         if not job.has_salary_reference:
             return 1.0
-        overlap_left = max(resume.expected_salary.min, job.salary_range.min)
-        overlap_right = min(resume.expected_salary.max, job.salary_range.max)
+        if resume.expected_salary.min <= 0 or resume.expected_salary.max <= 0:
+            return 1.0
+
+        resume_min = resume.expected_salary.min
+        resume_max = resume.expected_salary.max
+        job_min = job.salary_range.min
+        job_max = job.salary_range.max
+
+        if job_max < resume_min:
+            shortfall_ratio = max(job_max, 0) / max(resume_min, 1)
+            return round(max(0.02, min(shortfall_ratio, 1.0) ** 2 * 0.18), 4)
+
+        if job_min > resume_max:
+            overshoot_ratio = job_min / max(resume_max, 1)
+            if overshoot_ratio <= 1.5:
+                return 0.92
+            if overshoot_ratio <= 2.0:
+                return 0.86
+            return 0.8
+
+        overlap_left = max(resume_min, job_min)
+        overlap_right = min(resume_max, job_max)
         overlap = max(0, overlap_right - overlap_left)
-        union_left = min(resume.expected_salary.min, job.salary_range.min)
-        union_right = max(resume.expected_salary.max, job.salary_range.max)
-        union = max(union_right - union_left, 1)
-        return overlap / union
+        resume_span = max(resume_max - resume_min, 1)
+        overlap_ratio = overlap / resume_span
+        upside_bonus = 0.08 if job_max >= resume_max else 0.0
+        return round(min(1.0, 0.72 + overlap_ratio * 0.20 + upside_bonus), 4)
 
     def _has_education_constraints(self, constraints: JobEducationConstraints) -> bool:
         return any(

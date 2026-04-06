@@ -12,6 +12,9 @@ class MatchingAlgorithmConfig:
     total_weight_skill: float
     total_weight_experience: float
     total_weight_education: float
+    total_weight_domain: float
+    total_weight_location: float
+    total_weight_salary: float
     skill_required_weight: float
     skill_optional_weight: float
     skill_bonus_weight: float
@@ -40,14 +43,23 @@ class MatchingAlgorithmConfig:
     semantic_skill_base_score: float
     semantic_skill_score_scale: float
     semantic_skill_max_score: float
+    hard_skill_primary_threshold: float
+    hard_skill_required_threshold: float
+    hard_skill_primary_penalty: float
+    hard_skill_required_penalty: float
+    title_skill_mismatch_penalty: float
+    specialized_role_penalty: float
 
 
 def default_matching_algorithm_config() -> MatchingAlgorithmConfig:
     return MatchingAlgorithmConfig(
-        total_weight_vector=0.30,
-        total_weight_skill=0.15,
-        total_weight_experience=0.40,
-        total_weight_education=0.15,
+        total_weight_vector=0.20,
+        total_weight_skill=0.25,
+        total_weight_experience=0.10,
+        total_weight_education=0.10,
+        total_weight_domain=0.10,
+        total_weight_location=0.15,
+        total_weight_salary=0.10,
         skill_required_weight=0.60,
         skill_optional_weight=0.25,
         skill_bonus_weight=0.15,
@@ -76,6 +88,12 @@ def default_matching_algorithm_config() -> MatchingAlgorithmConfig:
         semantic_skill_base_score=0.55,
         semantic_skill_score_scale=2.5,
         semantic_skill_max_score=0.85,
+        hard_skill_primary_threshold=0.35,
+        hard_skill_required_threshold=0.45,
+        hard_skill_primary_penalty=0.70,
+        hard_skill_required_penalty=0.82,
+        title_skill_mismatch_penalty=0.60,
+        specialized_role_penalty=0.72,
     )
 
 
@@ -182,6 +200,18 @@ def get_settings() -> Settings:
                 "MATCH_TOTAL_WEIGHT_EDUCATION",
                 default_matching_config.total_weight_education,
             ),
+            total_weight_domain=_env_float(
+                "MATCH_TOTAL_WEIGHT_DOMAIN",
+                default_matching_config.total_weight_domain,
+            ),
+            total_weight_location=_env_float(
+                "MATCH_TOTAL_WEIGHT_LOCATION",
+                default_matching_config.total_weight_location,
+            ),
+            total_weight_salary=_env_float(
+                "MATCH_TOTAL_WEIGHT_SALARY",
+                default_matching_config.total_weight_salary,
+            ),
             skill_required_weight=_env_float(
                 "MATCH_SKILL_REQUIRED_WEIGHT",
                 default_matching_config.skill_required_weight,
@@ -287,6 +317,30 @@ def get_settings() -> Settings:
             semantic_skill_max_score=_env_float(
                 "MATCH_SEMANTIC_SKILL_MAX_SCORE",
                 default_matching_config.semantic_skill_max_score,
+            ),
+            hard_skill_primary_threshold=_env_float(
+                "MATCH_HARD_SKILL_PRIMARY_THRESHOLD",
+                default_matching_config.hard_skill_primary_threshold,
+            ),
+            hard_skill_required_threshold=_env_float(
+                "MATCH_HARD_SKILL_REQUIRED_THRESHOLD",
+                default_matching_config.hard_skill_required_threshold,
+            ),
+            hard_skill_primary_penalty=_env_float(
+                "MATCH_HARD_SKILL_PRIMARY_PENALTY",
+                default_matching_config.hard_skill_primary_penalty,
+            ),
+            hard_skill_required_penalty=_env_float(
+                "MATCH_HARD_SKILL_REQUIRED_PENALTY",
+                default_matching_config.hard_skill_required_penalty,
+            ),
+            title_skill_mismatch_penalty=_env_float(
+                "MATCH_TITLE_SKILL_MISMATCH_PENALTY",
+                default_matching_config.title_skill_mismatch_penalty,
+            ),
+            specialized_role_penalty=_env_float(
+                "MATCH_SPECIALIZED_ROLE_PENALTY",
+                default_matching_config.specialized_role_penalty,
             ),
         ),
     )

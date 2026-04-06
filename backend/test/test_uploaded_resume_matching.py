@@ -206,6 +206,7 @@ def trace_matching(services: Any, resume: Any, top_k: int) -> dict[str, Any]:
     recalled = matching.vector_store.query("jobs", resume_vector, recall_size)
     candidate_skill_index = matching._build_candidate_skill_index(resume)
     candidate_terms = matching._build_candidate_terms(resume)
+    skill_vector_cache: dict[str, list[float] | None] = {}
 
     filtered_out = 0
     traced_candidates: list[dict[str, Any]] = []
@@ -258,9 +259,18 @@ def trace_matching(services: Any, resume: Any, top_k: int) -> dict[str, Any]:
             candidate_score,
             candidate_skill_index,
             candidate_terms,
+            skill_vector_cache,
         )
-        matched_skills = [skill for skill in job.skills if skill.lower() in candidate_skill_index]
-        missing_skills = [skill for skill in job.skills if skill.lower() not in candidate_skill_index]
+        matched_skills = [
+            skill
+            for skill in job.skills
+            if matching._skill_match_exists(skill, candidate_skill_index, skill_vector_cache)
+        ]
+        missing_skills = [
+            skill
+            for skill in job.skills
+            if not matching._skill_match_exists(skill, candidate_skill_index, skill_vector_cache)
+        ]
         reasoning = matching._build_reasoning(job, matched_skills, missing_skills, breakdown)
         breakdown_dict = build_breakdown_dict(breakdown)
         traced_item = {

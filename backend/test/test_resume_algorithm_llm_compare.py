@@ -204,13 +204,16 @@ def ensure_resume(services: Any, resume_id: str, file_path: Path, force_reparse:
 
 
 def build_resume_snapshot(resume: Any, file_path: Path) -> dict[str, Any]:
+    first_degree = resume.basic_info.first_degree
+    if not first_degree:
+        first_degree = next((education.degree for education in resume.educations if education.degree), None)
     return {
         "resume_id": resume.id,
         "name": resume.basic_info.name,
         "current_title": resume.basic_info.current_title,
         "current_company": resume.basic_info.current_company,
-        "work_years": resume.basic_info.work_years,
-        "first_degree": resume.basic_info.first_degree,
+        "work_years": resume.basic_info.work_years or resume.years_experience,
+        "first_degree": first_degree,
         "expected_salary": {
             "min": resume.expected_salary.min,
             "max": resume.expected_salary.max,
@@ -232,6 +235,8 @@ def collect_candidate_pool(services: Any, resume: Any, candidate_limit: int) -> 
     resume_vector = matching._ensure_resume_vector(resume)
     candidate_skill_index = matching._build_candidate_skill_index(resume)
     candidate_terms = matching._build_candidate_terms(resume)
+    skill_vector_cache: dict[str, list[float] | None] = {}
+    domain_vector_cache: dict[str, list[float] | None] = {}
 
     recall_size = min(max(matching._dynamic_recall_size(desired, job_count), desired), max(job_count, desired))
     filtered_candidates: list[dict[str, Any]] = []
@@ -270,9 +275,19 @@ def collect_candidate_pool(services: Any, resume: Any, candidate_limit: int) -> 
                 candidate_score,
                 candidate_skill_index,
                 candidate_terms,
+                skill_vector_cache,
+                domain_vector_cache,
             )
-            matched_skills = [skill for skill in job.skills if matching._normalize_skill(skill) in candidate_skill_index]
-            missing_skills = [skill for skill in job.skills if matching._normalize_skill(skill) not in candidate_skill_index]
+            matched_skills = [
+                skill
+                for skill in job.skills
+                if matching._skill_match_exists(skill, candidate_skill_index, skill_vector_cache)
+            ]
+            missing_skills = [
+                skill
+                for skill in job.skills
+                if not matching._skill_match_exists(skill, candidate_skill_index, skill_vector_cache)
+            ]
             filtered_candidates.append(
                 {
                     "vector_rank": rank,

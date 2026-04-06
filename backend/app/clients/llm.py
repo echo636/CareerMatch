@@ -132,6 +132,13 @@ class QwenLLMClient(BaseLLMClient):
         return self._normalize_resume(payload, raw_text, file_name, resume_id)
 
     def extract_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._is_standardized_job_payload(payload):
+            logger.info(
+                "llm.qwen.extract_job.fast_path title=%s company=%s",
+                self._clean_text(payload.get("title")) or self._clean_text((payload.get("basic_info") or {}).get("title")),
+                self._clean_text(payload.get("company")) or self._clean_text(payload.get("company_name")),
+            )
+            return self._normalize_job({}, payload)
         model_payload = self._chat_json(self._job_messages(payload))
         return self._normalize_job(model_payload, payload)
 
@@ -168,11 +175,20 @@ class QwenLLMClient(BaseLLMClient):
         messages = self._match_score_messages(resume_text, job_context)
         payload = self._chat_json(messages)
         score = payload.get("score")
+        if score is None:
+            score = payload.get("overall_score")
         if not isinstance(score, (int, float)) or not (0 <= score <= 100):
             raise RuntimeError(f"LLM match score out of range or missing: {payload}")
+        subscores = payload.get("subscores")
+        normalized_subscores: dict[str, float] = {}
+        if isinstance(subscores, dict):
+            for key, value in subscores.items():
+                if isinstance(value, (int, float)) and 0 <= float(value) <= 100:
+                    normalized_subscores[str(key)] = round(float(value), 1)
         return {
-            "score": int(score),
+            "score": round(float(score), 1),
             "reasoning": str(payload.get("reasoning") or ""),
+            "subscores": normalized_subscores,
         }
 
     def _match_score_messages(self, resume_text: str, job_context: str) -> list[dict[str, str]]:
@@ -182,16 +198,30 @@ class QwenLLMClient(BaseLLMClient):
                 "content": (
                     "你是一位资深招聘评估专家。你的任务是评估一份简历与一个岗位的匹配程度。"
                     "返回合法 JSON，不要 markdown 代码块，不要多余文字。"
+                    "你必须使用完整评分区间并尽量拉开相近岗位的分差，避免大量岗位出现同分。"
                 ),
             },
             {
                 "role": "user",
                 "content": (
                     "请根据以下简历和岗位信息，综合评估匹配度并打分。\n"
-                    "评分维度：技能匹配度、工作经验相关性、学历契合度、薪资合理性、职业发展潜力。\n"
-                    "返回一个 JSON 对象，包含两个字段：\n"
-                    '- score: 整数，0-100，表示综合匹配度（0=完全不匹配，100=完美匹配）\n'
-                    '- reasoning: 字符串，用中文简要说明打分依据（2-3句话）\n'
+                    "评分维度：技能匹配度、工作经验相关性、学历契合度、薪资合理性、业务/领域相似性、地点匹配度、转岗成本。\n"
+                    "请特别注意：\n"
+                    "1. 如果岗位是强专精岗位（例如高级Java、核心自研、大模型平台、银行/保险/交易等），而候选人缺少核心技术栈或领域经验，应显著降低分数。\n"
+                    "2. 如果候选人的项目/业务域与岗位场景高度相似，即使主技术栈不完全一致，也可以适度上调分数。\n"
+                    "3. 如果候选人的期望城市与岗位城市明显不一致，且岗位不是远程/混合办公，应明确扣分。\n"
+                    "4. 评分必须拉开差距：若两个岗位匹配程度存在实际差异，overall_score 不要给出相同分数。\n"
+                    "5. overall_score 使用 0-100 的一位小数，不要只给 42/62/80 这种整齐分段。\n"
+                    "返回一个 JSON 对象，包含三个字段：\n"
+                    '- score: 数值，0-100，保留 1 位小数，表示综合匹配度\n'
+                    '- reasoning: 字符串，用中文简要说明打分依据（2-4句话）\n'
+                    '- subscores: 对象，包含 skill, experience, education, salary, domain, location, transition_cost 七个字段，均为 0-100 的数值\n'
+                    "评分参考：\n"
+                    "- 85-100：高度匹配，主技术栈、业务场景、经验层级都明显贴合\n"
+                    "- 70-84：较强匹配，有少量技术栈或地点偏差，但整体可转化\n"
+                    "- 50-69：中等匹配，存在明显技术栈/领域缺口，但仍有迁移空间\n"
+                    "- 30-49：弱匹配，核心技能或专精领域差距明显\n"
+                    "- 0-29：基本不匹配，主技能、行业方向和岗位层级均明显错位\n"
                     "\n"
                     f"简历全文：\n{resume_text}\n"
                     "\n"
@@ -694,6 +724,16 @@ class QwenLLMClient(BaseLLMClient):
             },
             "tags": tags,
         }
+
+    def _is_standardized_job_payload(self, payload: dict[str, Any]) -> bool:
+        title = self._clean_text(payload.get("title")) or self._clean_text((payload.get("basic_info") or {}).get("title"))
+        company = self._clean_text(payload.get("company")) or self._clean_text(payload.get("company_name"))
+        has_structured_text = any(
+            self._clean_text(payload.get(key))
+            for key in ("summary", "description", "raw_text", "location", "salary")
+        )
+        has_skills = bool(payload.get("skill_requirements") or payload.get("skills") or payload.get("skill_tags"))
+        return bool(title and company and has_structured_text and has_skills)
     def _normalize_resume_education(self, item: Any) -> dict[str, Any]:
         payload = self._as_dict(item)
         return {

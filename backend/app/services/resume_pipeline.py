@@ -47,14 +47,15 @@ class ResumePipelineService:
         source_content_type: str = "",
         source_object_key: str = "",
     ) -> ResumeProfile:
+        normalized_raw_text = self._normalize_raw_text(raw_text)
         logger.info(
             "resume_pipeline.process.start resume_id=%s file_name=%s raw_text_length=%s source_content_type=%s",
             resume_id,
             file_name,
-            len(raw_text),
+            len(normalized_raw_text),
             source_content_type,
         )
-        extracted = self.llm_client.extract_resume(raw_text, file_name, resume_id)
+        extracted = self.llm_client.extract_resume(normalized_raw_text, file_name, resume_id)
         expected_salary = extracted.get("expected_salary") or {}
         resume = ResumeProfile(
             id=extracted["id"],
@@ -72,7 +73,7 @@ class ResumePipelineService:
                 max=int(expected_salary.get("max", 35000)),
                 currency=str(expected_salary.get("currency", "CNY")),
             ),
-            raw_text=raw_text,
+            raw_text=normalized_raw_text,
             source_file_name=file_name,
             source_content_type=source_content_type,
             source_object_key=source_object_key,
@@ -140,6 +141,11 @@ class ResumePipelineService:
 
     def _vector_payload(self, resume: ResumeProfile) -> str:
         return " ".join([resume.summary, *resume.skill_names, *resume.project_keywords])
+
+    def _normalize_raw_text(self, raw_text: str) -> str:
+        if not raw_text:
+            return ""
+        return raw_text.replace("\x00", " ").replace("\ufeff", " ").strip()
 
     def _ensure_vector(self, namespace: str, item_id: str, payload: str) -> list[float]:
         payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()

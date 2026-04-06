@@ -2,7 +2,41 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
+import re
 from typing import Any
+
+PLACEHOLDER_TEXT_MARKERS = {
+    "company pending",
+    "role pending",
+    "project pending",
+    "school pending",
+    "skill pending",
+    "tag pending",
+    "language pending",
+    "resume summary pending.",
+    "job description pending.",
+    "untitled role",
+    "optional skills",
+    "experience pending",
+}
+SUMMARY_NOISE_LABELS = (
+    "联系方式",
+    "社交主页",
+    "联系电话",
+    "手机号",
+    "电话",
+    "邮箱",
+    "微信",
+    "wechat",
+    "qq",
+    "mail",
+    "email",
+)
+CONTACT_URL_PATTERN = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+CONTACT_EMAIL_PATTERN = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b", re.IGNORECASE)
+CONTACT_PHONE_PATTERN = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
+CONTACT_HANDLE_PATTERN = re.compile(r"\b[a-zA-Z]\d{8,}\b")
+WHITESPACE_PATTERN = re.compile(r"\s+")
 
 
 @dataclass(slots=True)
@@ -16,7 +50,7 @@ def _deduplicate(values: list[str]) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
     for value in values:
-        normalized = value.strip()
+        normalized = normalize_profile_token(value)
         if not normalized:
             continue
         marker = normalized.lower()
@@ -25,6 +59,45 @@ def _deduplicate(values: list[str]) -> list[str]:
         seen.add(marker)
         ordered.append(normalized)
     return ordered
+
+
+def is_placeholder_text(value: Any) -> bool:
+    if value is None:
+        return True
+    text = str(value).strip()
+    if not text:
+        return True
+    marker = WHITESPACE_PATTERN.sub(" ", text).strip().lower()
+    if marker in PLACEHOLDER_TEXT_MARKERS:
+        return True
+    return marker.endswith(" pending") or marker.endswith(" pending.")
+
+
+def normalize_profile_token(value: Any) -> str | None:
+    if is_placeholder_text(value):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if CONTACT_URL_PATTERN.fullmatch(text) or CONTACT_EMAIL_PATTERN.fullmatch(text) or CONTACT_PHONE_PATTERN.fullmatch(text):
+        return None
+    return text
+
+
+def clean_resume_summary_text(value: Any) -> str | None:
+    if is_placeholder_text(value):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = CONTACT_URL_PATTERN.sub(" ", text)
+    text = CONTACT_EMAIL_PATTERN.sub(" ", text)
+    text = CONTACT_PHONE_PATTERN.sub(" ", text)
+    text = CONTACT_HANDLE_PATTERN.sub(" ", text)
+    for label in SUMMARY_NOISE_LABELS:
+        text = re.sub(rf"(?i){re.escape(label)}[:：]?", " ", text)
+    text = WHITESPACE_PATTERN.sub(" ", text).strip(" ,;，；|")
+    return text or None
 
 
 @dataclass(slots=True)
@@ -123,10 +196,13 @@ class ResumeProfile:
 
     @property
     def summary(self) -> str:
+        cleaned_summary = clean_resume_summary_text(self.basic_info.summary)
+        cleaned_self_evaluation = clean_resume_summary_text(self.basic_info.self_evaluation)
+        cleaned_raw_text = clean_resume_summary_text(self.raw_text)
         return (
-            self.basic_info.summary
-            or self.basic_info.self_evaluation
-            or self.raw_text.strip()[:500]
+            cleaned_summary
+            or cleaned_self_evaluation
+            or (cleaned_raw_text[:500] if cleaned_raw_text else None)
             or "Resume summary pending."
         )
 
@@ -144,9 +220,12 @@ class ResumeProfile:
     def project_keywords(self) -> list[str]:
         values: list[str] = []
         for project in self.projects:
-            values.append(project.name)
+            if project.name:
+                values.append(project.name)
             if project.domain:
                 values.append(project.domain)
+            if project.role:
+                values.append(project.role)
         values.extend(
             tag.name
             for tag in self.tags
@@ -158,6 +237,16 @@ class ResumeProfile:
     def years_experience(self) -> int:
         if self.basic_info.work_years is not None:
             return self.basic_info.work_years
+        inferred_from_text = _infer_resume_work_years_from_text(
+            self.basic_info.summary,
+            self.basic_info.self_evaluation,
+            self.raw_text,
+        )
+        if inferred_from_text is not None:
+            return inferred_from_text
+        inferred_from_span = _infer_resume_years_from_work_experiences(self.work_experiences)
+        if inferred_from_span is not None:
+            return inferred_from_span
         skill_years = [skill.years for skill in self.skills if skill.years is not None]
         return max(skill_years, default=0)
 
@@ -463,6 +552,51 @@ def _parse_datetime_value(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _infer_resume_work_years_from_text(*values: str | None) -> int | None:
+    for value in values:
+        if not value:
+            continue
+        match = re.search(r"(\d{1,2})\s*年(?:工作)?经验", value)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _normalize_resume_date_value(value: str | None) -> tuple[int, int] | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text == "至今":
+        now = datetime.now(timezone.utc)
+        return now.year, now.month
+    match = re.match(r"(?P<year>\d{4})[./-](?P<month>\d{1,2})", text)
+    if match is None:
+        return None
+    return int(match.group("year")), int(match.group("month"))
+
+
+def _infer_resume_years_from_work_experiences(work_experiences: list[ResumeWorkExperience]) -> int | None:
+    spans: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    for experience in work_experiences:
+        start = _normalize_resume_date_value(experience.start_date)
+        end = _normalize_resume_date_value(experience.end_date)
+        if start is None:
+            continue
+        spans.append((start, end or start))
+    if not spans:
+        return None
+    earliest_start = min(spans, key=lambda item: item[0])[0]
+    latest_end = max(spans, key=lambda item: item[1])[1]
+    months = max(
+        0,
+        (latest_end[0] - earliest_start[0]) * 12 + (latest_end[1] - earliest_start[1]),
+    )
+    years = max(1, round(months / 12))
+    return years
 
 
 def _normalize_posted_at(raw_values: list[Any] | None) -> tuple[str | None, int | None]:

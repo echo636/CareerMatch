@@ -62,6 +62,20 @@ def spearman_rho(algo_ids: list[str], llm_ids: list[str]) -> float:
     return round(1.0 - (6 * d_sq) / (n * (n ** 2 - 1)), 4)
 
 
+def llm_sort_key(item: dict[str, Any]) -> tuple[float, float, float, float, float, float, float, float]:
+    subscores = item.get("llm_subscores") or {}
+    return (
+        float(item.get("llm_score") or 0.0),
+        float(subscores.get("domain") or 0.0),
+        float(subscores.get("skill") or 0.0),
+        float(subscores.get("experience") or 0.0),
+        float(subscores.get("location") or 0.0),
+        float(subscores.get("education") or 0.0),
+        float(subscores.get("salary") or 0.0),
+        -float(subscores.get("transition_cost") or 0.0),
+    )
+
+
 def brief_text(text: str, limit: int = 120) -> str:
     normalized = " ".join((text or "").split())
     if len(normalized) <= limit:
@@ -186,7 +200,7 @@ def main() -> int:
             print(f"→ {result['score']}分 ({score_ms} ms)")
         except Exception as exc:
             print(f"→ 失败: {exc}")
-            result = {"score": 0, "reasoning": f"LLM调用失败: {exc}"}
+            result = {"score": 0, "reasoning": f"LLM调用失败: {exc}", "subscores": {}}
 
         llm_results.append({
             "job_id": match.job.id,
@@ -195,6 +209,7 @@ def main() -> int:
             "algo_score": match.breakdown.total,
             "llm_score": result["score"],
             "llm_reasoning": result["reasoning"],
+            "llm_subscores": result.get("subscores") or {},
         })
 
     llm_duration = round((perf_counter() - llm_start) * 1000, 2)
@@ -202,7 +217,7 @@ def main() -> int:
 
     # Step 4: Build rankings
     algo_order = [r["job_id"] for r in llm_results]
-    llm_sorted = sorted(llm_results, key=lambda x: x["llm_score"], reverse=True)
+    llm_sorted = sorted(llm_results, key=llm_sort_key, reverse=True)
     llm_order = [r["job_id"] for r in llm_sorted]
 
     llm_rank_map = {job_id: rank + 1 for rank, job_id in enumerate(llm_order)}
