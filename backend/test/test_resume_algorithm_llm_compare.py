@@ -89,6 +89,30 @@ def format_values(values: list[str], limit: int = 6) -> str:
     return text
 
 
+def mask_dsn(dsn: str) -> str:
+    cleaned = (dsn or "").strip()
+    if not cleaned or "://" not in cleaned:
+        return cleaned or "-"
+    scheme, rest = cleaned.split("://", 1)
+    if "@" not in rest:
+        return cleaned
+    credentials, host = rest.rsplit("@", 1)
+    if ":" in credentials:
+        user = credentials.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{host}"
+    return f"{scheme}://***@{host}"
+
+
+def ensure_postgres_backing_store(services: Any) -> None:
+    job_repo_name = type(services.matching_service.job_repository).__name__
+    resume_repo_name = type(services.resume_pipeline.repository).__name__
+    if "postgres" not in job_repo_name.lower() or "postgres" not in resume_repo_name.lower():
+        raise SystemExit(
+            "resume_algorithm_llm_compare requires Docker Postgres repositories; "
+            f"job_repository={job_repo_name}, resume_repository={resume_repo_name}"
+        )
+
+
 def build_breakdown_dict(breakdown: Any) -> dict[str, float]:
     return {
         "vector_similarity": float(breakdown.vector_similarity),
@@ -577,7 +601,9 @@ def render_report(report: dict[str, Any]) -> str:
     lines.append(f"- Run At: {report['run_at']}")
     lines.append(f"- Resume Source: {report['resume_source']}")
     lines.append(f"- Resume File: {snapshot['upload_file_path']}")
-    lines.append(f"- State DB: {report['settings']['state_db']}")
+    lines.append(f"- Job Data Source: {report['settings']['job_data_source']}")
+    lines.append(f"- Resume Data Source: {report['settings']['resume_data_source']}")
+    lines.append(f"- Postgres DSN: {report['settings']['postgres_dsn']}")
     lines.append(f"- Upload Root: {report['settings']['upload_root']}")
     lines.append(f"- LLM Provider: {report['settings']['llm_provider']}")
     lines.append(f"- LLM Model: {report['settings']['llm_model']}")
@@ -673,6 +699,7 @@ def main() -> int:
     settings = get_settings()
     configure_logging(settings.app_log_dir, settings.app_log_level)
     services = build_services(settings)
+    ensure_postgres_backing_store(services)
 
     resume_id, file_path = resolve_resume_selection(settings, args.resume_id, args.resume_file)
     resume, status = ensure_resume(services, resume_id, file_path, bool(args.force_reparse))
@@ -706,7 +733,9 @@ def main() -> int:
     report: dict[str, Any] = {
         "run_at": started_at.isoformat(timespec="seconds"),
         "settings": {
-            "state_db": str(settings.app_state_db_path),
+            "job_data_source": type(services.matching_service.job_repository).__name__,
+            "resume_data_source": type(services.resume_pipeline.repository).__name__,
+            "postgres_dsn": mask_dsn(settings.postgres_dsn),
             "upload_root": str(upload_roots[0]) if upload_roots else str(settings.object_storage_root),
             "llm_provider": settings.llm_provider,
             "llm_model": settings.qwen_llm_model,

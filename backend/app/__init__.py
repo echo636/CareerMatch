@@ -23,6 +23,20 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
 
 
+def _mask_dsn(dsn: str) -> str:
+    cleaned = (dsn or "").strip()
+    if not cleaned or "://" not in cleaned:
+        return cleaned or "-"
+    scheme, rest = cleaned.split("://", 1)
+    if "@" not in rest:
+        return cleaned
+    credentials, host = rest.rsplit("@", 1)
+    if ":" in credentials:
+        user = credentials.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{host}"
+    return f"{scheme}://***@{host}"
+
+
 def create_app() -> Flask:
     settings = get_settings()
     configure_logging(settings.app_log_dir, settings.app_log_level)
@@ -64,12 +78,15 @@ def create_app() -> Flask:
         return response
 
     app.config["services"] = build_services(settings)
+    services = app.config["services"]
     logger.info(
-        "app.initialized app_name=%s llm_provider=%s embedding_provider=%s state_db=%s log_dir=%s",
+        "app.initialized app_name=%s llm_provider=%s embedding_provider=%s job_repository=%s resume_repository=%s postgres_dsn=%s log_dir=%s",
         settings.app_name,
         settings.llm_provider,
         settings.embedding_provider,
-        settings.app_state_db_path,
+        type(services.matching_service.job_repository).__name__,
+        type(services.resume_pipeline.repository).__name__,
+        _mask_dsn(settings.postgres_dsn),
         settings.app_log_dir,
     )
 

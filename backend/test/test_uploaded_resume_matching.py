@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Test matching flow for uploaded resumes. The script scans backend/uploads/resumes, "
-            "reuses persisted resumes from SQLite when possible, and writes managed reports under backend/test/reports/resume_matching by default."
+            "reuses persisted resumes from Postgres when possible, and writes managed reports under backend/test/reports/resume_matching by default."
         )
     )
     parser.add_argument(
@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         "--hydrate-missing",
         action="store_true",
         help=(
-            "If a resume folder exists in uploads but the structured resume is missing from SQLite, "
+            "If a resume folder exists in uploads but the structured resume is missing from Postgres, "
             "re-parse the source file and persist the resume before matching."
         ),
     )
@@ -104,6 +104,30 @@ def format_values(values: list[str], limit: int = 6) -> str:
     if len(values) > limit:
         text += f" ... (+{len(values) - limit})"
     return text
+
+
+def mask_dsn(dsn: str) -> str:
+    cleaned = (dsn or "").strip()
+    if not cleaned or "://" not in cleaned:
+        return cleaned or "-"
+    scheme, rest = cleaned.split("://", 1)
+    if "@" not in rest:
+        return cleaned
+    credentials, host = rest.rsplit("@", 1)
+    if ":" in credentials:
+        user = credentials.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{host}"
+    return f"{scheme}://***@{host}"
+
+
+def ensure_postgres_backing_store(services: Any) -> None:
+    job_repo_name = type(services.matching_service.job_repository).__name__
+    resume_repo_name = type(services.resume_pipeline.repository).__name__
+    if "postgres" not in job_repo_name.lower() or "postgres" not in resume_repo_name.lower():
+        raise SystemExit(
+            "uploaded_resume_matching requires Docker Postgres repositories; "
+            f"job_repository={job_repo_name}, resume_repository={resume_repo_name}"
+        )
 
 
 def brief_text(text: str, limit: int = 120) -> str:
@@ -341,7 +365,9 @@ def render_report(report: dict[str, Any]) -> str:
     lines.append("# Uploaded Resume Matching Test Report")
     lines.append("")
     lines.append(f"- Run At: {report['run_at']}")
-    lines.append(f"- State DB: {report['settings']['state_db']}")
+    lines.append(f"- Job Data Source: {report['settings']['job_data_source']}")
+    lines.append(f"- Resume Data Source: {report['settings']['resume_data_source']}")
+    lines.append(f"- Postgres DSN: {report['settings']['postgres_dsn']}")
     lines.append(f"- Upload Root: {report['settings']['upload_root']}")
     lines.append(f"- LLM Provider: {report['settings']['llm_provider']}")
     lines.append(f"- Embedding Provider: {report['settings']['embedding_provider']}")
@@ -457,6 +483,7 @@ def main() -> int:
     settings = get_settings()
     configure_logging(settings.app_log_dir, settings.app_log_level)
     services = build_services(settings)
+    ensure_postgres_backing_store(services)
 
     upload_root = settings.object_storage_root / "resumes"
     selected_resume_ids = select_resume_ids(upload_root, args.resume_ids, args.limit)
@@ -471,7 +498,9 @@ def main() -> int:
     report: dict[str, Any] = {
         "run_at": started_at.isoformat(timespec="seconds"),
         "settings": {
-            "state_db": str(settings.app_state_db_path),
+            "job_data_source": type(services.matching_service.job_repository).__name__,
+            "resume_data_source": type(services.resume_pipeline.repository).__name__,
+            "postgres_dsn": mask_dsn(settings.postgres_dsn),
             "upload_root": str(upload_root),
             "llm_provider": settings.llm_provider,
             "embedding_provider": settings.embedding_provider,
