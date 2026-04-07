@@ -55,8 +55,8 @@ def default_matching_algorithm_config() -> MatchingAlgorithmConfig:
     return MatchingAlgorithmConfig(
         total_weight_vector=0.20,
         total_weight_skill=0.25,
-        total_weight_experience=0.10,
-        total_weight_education=0.10,
+        total_weight_experience=0.15,
+        total_weight_education=0.05,
         total_weight_domain=0.10,
         total_weight_location=0.15,
         total_weight_salary=0.10,

@@ -23,6 +23,7 @@ from app.domain.models import (
     ResumeProfile,
     is_placeholder_text,
 )
+from app.job_enrichment import infer_skills
 from app.repositories.in_memory import JobRepository, ResumeRepository
 from app.services.skill_aliases import normalize_skill_name
 
@@ -35,6 +36,32 @@ LEVEL_RANK = {
 
 SKILL_VECTOR_NAMESPACE = "skill_terms"
 DOMAIN_VECTOR_NAMESPACE = "domain_terms"
+FRONTEND_FRAMEWORK_SKILLS = {
+    "vue",
+    "react",
+    "angular",
+    "next.js",
+    "nuxt.js",
+    "svelte",
+}
+FRONTEND_SIGNAL_SKILLS = FRONTEND_FRAMEWORK_SKILLS | {
+    "javascript",
+    "typescript",
+    "html",
+    "css",
+    "vite",
+    "webpack",
+    "pinia",
+    "vue router",
+    "element-ui",
+    "tailwindcss",
+    "echarts",
+    "uniapp",
+}
+GIT_PLATFORM_SKILLS = {"gitee", "github", "gitlab"}
+TEXT_DERIVED_SKILL_CONFIDENCE = 0.92
+INFERRED_FOUNDATION_CONFIDENCE = 0.78
+INFERRED_TOOL_CONFIDENCE = 0.84
 
 DEGREE_RANK = {
     "high_school": 1,
@@ -525,8 +552,20 @@ class MatchingService:
         if title_skill_alignment == 0.0:
             skill_match = max(min(skill_match * 0.25, 0.10), round(transition_score * 0.6, 4))
 
-        core_experience_scores = self._core_experience_scores(resume, job, candidate_skill_index, candidate_terms)
-        bonus_experience_score = self._bonus_experience_score(resume, job, candidate_skill_index, candidate_terms)
+        core_experience_scores = self._core_experience_scores(
+            resume,
+            job,
+            candidate_skill_index,
+            candidate_terms,
+            skill_vector_cache,
+        )
+        bonus_experience_score = self._bonus_experience_score(
+            resume,
+            job,
+            candidate_skill_index,
+            candidate_terms,
+            skill_vector_cache,
+        )
         total_years_score = self._total_years_score(resume, job)
         experience_match = self._weighted_score(
             [
@@ -678,6 +717,8 @@ class MatchingService:
         for tag in resume.tags:
             if (tag.category or "").lower() == "tech":
                 self._upsert_skill(index, tag.name, None, None)
+        self._augment_text_derived_candidate_skills(index, resume)
+        self._augment_inferred_candidate_skills(index)
         return index
 
     def _normalize_skill(self, name: str) -> str:
@@ -689,36 +730,115 @@ class MatchingService:
         name: str,
         level: str | None,
         years: float | None,
+        confidence: float = 1.0,
     ) -> None:
         if is_placeholder_text(name):
             return
-        normalized = self._normalize_skill(name)
-        if not normalized:
-            return
-        current = index.get(normalized)
         level_rank = float(self._level_rank(level))
-        if current is None:
-            index[normalized] = {
-                "name": name.strip(),
-                "level_rank": level_rank,
-                "years": years,
-            }
-            return
-        current_level_rank = float(current.get("level_rank") or 0.0)
-        current["level_rank"] = max(current_level_rank, level_rank)
-        current_years = current.get("years")
-        if years is not None:
-            if current_years is None or float(current_years) < years:
-                current["years"] = years
+        for expanded_name in self._expand_skill_names(name):
+            normalized = self._normalize_skill(expanded_name)
+            if not normalized:
+                continue
+            current = index.get(normalized)
+            if current is None:
+                index[normalized] = {
+                    "name": expanded_name.strip(),
+                    "level_rank": level_rank,
+                    "years": years,
+                    "confidence": confidence,
+                }
+                continue
+            current_level_rank = float(current.get("level_rank") or 0.0)
+            current["level_rank"] = max(current_level_rank, level_rank)
+            current_years = current.get("years")
+            if years is not None:
+                if current_years is None or float(current_years) < years:
+                    current["years"] = years
+            current_confidence = float(current.get("confidence") or 0.0)
+            current["confidence"] = max(current_confidence, confidence)
+
+    def _expand_skill_names(self, value: str) -> list[str]:
+        cleaned = value.strip()
+        if not cleaned or is_placeholder_text(cleaned):
+            return []
+        delimiter_pattern = r"[\\/|、，,；;]+"
+        extracted = infer_skills({}, cleaned)
+        parts = [
+            token.strip("()（）[]{}+·• ")
+            for token in re.split(
+                delimiter_pattern,
+                cleaned.replace("（", "/").replace("）", "/").replace("(", "/").replace(")", "/"),
+            )
+            if token.strip("()（）[]{}+·• ")
+        ]
+        candidates = [*parts, *extracted]
+        if not candidates:
+            candidates = [cleaned]
+        elif len(candidates) == 1 and self._normalize_skill(candidates[0]) == self._normalize_skill(cleaned):
+            candidates = [cleaned]
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for item in candidates:
+            normalized = self._normalize_skill(item)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            ordered.append(item.strip())
+        return ordered or [cleaned]
+
+    def _augment_text_derived_candidate_skills(
+        self,
+        index: dict[str, dict[str, float | str | None]],
+        resume: ResumeProfile,
+    ) -> None:
+        text_parts: list[str] = [resume.summary, resume.raw_text]
+        for experience in resume.work_experiences:
+            text_parts.extend(experience.responsibilities or [])
+            text_parts.extend(experience.achievements or [])
+            if experience.title:
+                text_parts.append(experience.title)
+        for project in resume.projects:
+            if project.name:
+                text_parts.append(project.name)
+            if project.role:
+                text_parts.append(project.role)
+            if project.description:
+                text_parts.append(project.description)
+            text_parts.extend(project.responsibilities or [])
+            text_parts.extend(project.achievements or [])
+        derived_skills = infer_skills({}, "\n".join(part for part in text_parts if part))
+        for skill_name in derived_skills:
+            self._upsert_skill(index, skill_name, None, None, TEXT_DERIVED_SKILL_CONFIDENCE)
+
+    def _augment_inferred_candidate_skills(
+        self,
+        index: dict[str, dict[str, float | str | None]],
+    ) -> None:
+        normalized_skills = set(index.keys())
+        has_frontend_signal = bool(normalized_skills & FRONTEND_FRAMEWORK_SKILLS) or len(
+            normalized_skills & FRONTEND_SIGNAL_SKILLS
+        ) >= 2
+        if has_frontend_signal:
+            for skill_name in ("html", "css", "javascript"):
+                self._upsert_skill(index, skill_name, None, None, INFERRED_FOUNDATION_CONFIDENCE)
+        if "git" not in normalized_skills and normalized_skills & GIT_PLATFORM_SKILLS:
+            self._upsert_skill(index, "git", None, None, INFERRED_TOOL_CONFIDENCE)
 
     def _build_candidate_terms(self, resume: ResumeProfile) -> set[str]:
         terms: set[str] = set()
+        self._add_terms(terms, resume.skill_names)
         self._add_terms(terms, resume.project_keywords)
         self._add_terms(terms, [project.name for project in resume.projects])
         self._add_terms(terms, [project.domain for project in resume.projects if project.domain])
+        self._add_terms(terms, [project.description for project in resume.projects if project.description])
+        self._add_terms(terms, [item for project in resume.projects for item in (project.responsibilities or [])])
+        self._add_terms(terms, [item for project in resume.projects for item in (project.achievements or [])])
         self._add_terms(terms, [tag.name for tag in resume.tags])
         self._add_terms(terms, [experience.industry for experience in resume.work_experiences if experience.industry])
         self._add_terms(terms, [experience.title for experience in resume.work_experiences if experience.title])
+        self._add_terms(terms, [item for experience in resume.work_experiences for item in (experience.responsibilities or [])])
+        self._add_terms(terms, [item for experience in resume.work_experiences for item in (experience.achievements or [])])
         self._add_terms(terms, [resume.basic_info.current_title] if resume.basic_info.current_title else [])
         self._add_terms(terms, [resume.basic_info.current_company] if resume.basic_info.current_company else [])
         return terms
@@ -1168,6 +1288,7 @@ class MatchingService:
             )
             if candidate is None or base_score <= 0:
                 return 0.0
+        base_score = min(base_score, self._candidate_confidence(candidate))
         scores = [base_score]
         if requirement.level:
             scores.append(
@@ -1232,6 +1353,7 @@ class MatchingService:
             )
             if candidate is None or base_score <= 0:
                 return 0.0
+        base_score = min(base_score, self._candidate_confidence(candidate))
         if not skill.level:
             return base_score
         level_score = self._level_score(float(candidate.get("level_rank") or 0.0), skill.level)
@@ -1259,11 +1381,13 @@ class MatchingService:
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
-        exact_match = self._normalize_skill(skill.name) in candidate_skill_index
-        if exact_match:
-            return 1.0
-        semantic_score, _ = self._best_semantic_skill_match(skill.name, candidate_skill_index, skill_vector_cache)
-        return semantic_score
+        candidate = candidate_skill_index.get(self._normalize_skill(skill.name))
+        if candidate is not None:
+            return self._candidate_confidence(candidate)
+        semantic_score, candidate = self._best_semantic_skill_match(skill.name, candidate_skill_index, skill_vector_cache)
+        if candidate is None:
+            return semantic_score
+        return min(semantic_score, self._candidate_confidence(candidate))
 
     def _skill_match_exists(
         self,
@@ -1275,6 +1399,14 @@ class MatchingService:
             return True
         semantic_score, _ = self._best_semantic_skill_match(skill_name, candidate_skill_index, skill_vector_cache)
         return semantic_score > 0
+
+    def _candidate_confidence(self, candidate: dict[str, float | str | None] | None) -> float:
+        if candidate is None:
+            return 1.0
+        confidence = candidate.get("confidence")
+        if isinstance(confidence, (int, float)):
+            return max(0.0, min(float(confidence), 1.0))
+        return 1.0
 
     def _best_semantic_skill_match(
         self,
@@ -1355,9 +1487,10 @@ class MatchingService:
         job: JobProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         candidate_terms: set[str],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> list[float]:
         return [
-            self._score_experience_item(item, resume, candidate_skill_index, candidate_terms)
+            self._score_experience_item(item, resume, candidate_skill_index, candidate_terms, skill_vector_cache)
             for item in job.experience_requirements.core
         ]
 
@@ -1367,12 +1500,19 @@ class MatchingService:
         job: JobProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         candidate_terms: set[str],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
         weighted_components: list[tuple[float, float]] = []
         for item in job.experience_requirements.bonus:
             weighted_components.append(
                 (
-                    self._score_bonus_experience(item, resume, candidate_skill_index, candidate_terms),
+                    self._score_bonus_experience(
+                        item,
+                        resume,
+                        candidate_skill_index,
+                        candidate_terms,
+                        skill_vector_cache,
+                    ),
                     float(item.weight or 1),
                 )
             )
@@ -1384,6 +1524,7 @@ class MatchingService:
         resume: ResumeProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         candidate_terms: set[str],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
         return self._score_experience_term(
             item.type,
@@ -1394,6 +1535,7 @@ class MatchingService:
             resume,
             candidate_skill_index,
             candidate_terms,
+            skill_vector_cache,
         )
 
     def _score_experience_item(
@@ -1402,6 +1544,7 @@ class MatchingService:
         resume: ResumeProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         candidate_terms: set[str],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
         return self._score_experience_term(
             item.type,
@@ -1412,6 +1555,7 @@ class MatchingService:
             resume,
             candidate_skill_index,
             candidate_terms,
+            skill_vector_cache,
         )
 
     def _score_experience_term(
@@ -1424,15 +1568,48 @@ class MatchingService:
         resume: ResumeProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         candidate_terms: set[str],
+        skill_vector_cache: dict[str, list[float] | None],
     ) -> float:
         raw_text = resume.raw_text.lower()
         content_scores = [self._term_hit_score(name, candidate_terms, raw_text)]
         content_scores.extend(self._term_hit_score(keyword, candidate_terms, raw_text) for keyword in keywords)
         if description:
             content_scores.append(self._term_hit_score(description, candidate_terms, raw_text, exact=False))
+        experience_skill_hints = infer_skills(
+            {},
+            " ".join(
+                part
+                for part in [name, description or "", *keywords]
+                if part
+            ),
+        )
+        if experience_skill_hints:
+            skill_bridge_scores = [
+                self._score_bonus_skill(
+                    BonusSkill(name=skill_name),
+                    candidate_skill_index,
+                    skill_vector_cache,
+                )
+                for skill_name in experience_skill_hints[:8]
+            ]
+            bridge_multiplier = 1.0 if item_type.lower() == "tech" else 0.8
+            content_scores.append(max(skill_bridge_scores, default=0.0) * bridge_multiplier)
         if item_type.lower() == "tech":
-            tech_scores = [1.0 if self._normalize_skill(name) in candidate_skill_index else 0.0]
-            tech_scores.extend(1.0 if self._normalize_skill(keyword) in candidate_skill_index else 0.0 for keyword in keywords)
+            tech_scores = [
+                self._score_bonus_skill(
+                    BonusSkill(name=name),
+                    candidate_skill_index,
+                    skill_vector_cache,
+                )
+            ]
+            tech_scores.extend(
+                self._score_bonus_skill(
+                    BonusSkill(name=keyword),
+                    candidate_skill_index,
+                    skill_vector_cache,
+                )
+                for keyword in keywords
+            )
             content_scores.append(max(tech_scores, default=0.0))
 
         content_score = max(content_scores, default=0.0)
@@ -1505,17 +1682,27 @@ class MatchingService:
         if target_rank == 0:
             return 1.0
         if candidate_rank == 0:
-            return 0.65
-        return min(candidate_rank / target_rank, 1.0)
+            return 0.55 if target_rank <= DEGREE_RANK["bachelor"] else 0.35
+        if candidate_rank < target_rank:
+            return max(0.2, (candidate_rank / target_rank) * 0.6)
+        if candidate_rank == target_rank:
+            return 0.85
+        return 0.88
 
     def _preferred_degree_score(self, resume: ResumeProfile, preferred_degrees: list[str]) -> float:
         candidate_rank = self._candidate_degree_rank(resume)
         if candidate_rank == 0:
-            return 0.75
+            return 0.55
         target_ranks = [self._degree_rank(value) for value in preferred_degrees if self._degree_rank(value) > 0]
         if not target_ranks:
             return 1.0
-        return max(min(candidate_rank / target_rank, 1.0) for target_rank in target_ranks)
+        scores: list[float] = []
+        for target_rank in target_ranks:
+            if candidate_rank >= target_rank:
+                scores.append(0.8 if candidate_rank == target_rank else 0.84)
+                continue
+            scores.append(max(0.3, (candidate_rank / target_rank) * 0.65))
+        return max(scores, default=1.0)
 
     def _candidate_degree_rank(self, resume: ResumeProfile) -> float:
         ranks = [self._degree_rank(resume.basic_info.first_degree)]
@@ -1529,16 +1716,16 @@ class MatchingService:
             if education.major
         }
         if not candidate_majors:
-            return 0.65 if strict else 0.8
+            return 0.4 if strict else 0.55
         for target_major in target_majors:
             normalized = target_major.strip().lower()
             if not normalized:
                 continue
             if normalized in candidate_majors:
-                return 1.0
-            if any(normalized in major or major in normalized for major in candidate_majors):
                 return 0.85
-        return 0.0 if strict else 0.7
+            if any(normalized in major or major in normalized for major in candidate_majors):
+                return 0.72
+        return 0.0 if strict else 0.45
 
     def _salary_score(self, resume: ResumeProfile, job: JobProfile) -> float:
         if not job.has_salary_reference:

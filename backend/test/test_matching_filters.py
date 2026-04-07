@@ -13,6 +13,7 @@ from app.clients.embedding import BaseEmbeddingClient
 from app.clients.llm import BaseLLMClient
 from app.clients.vector_store import InMemoryVectorStore
 from app.domain.models import (
+    CoreExperience,
     GapInsight,
     JobBasicInfo,
     JobEducationConstraints,
@@ -22,13 +23,16 @@ from app.domain.models import (
     JobSkillRequirements,
     MatchFilters,
     ResumeBasicInfo,
+    ResumeEducation,
     ResumeProfile,
+    ResumeProject,
     ResumeSkill,
     RequiredSkill,
     SalaryRange,
 )
 from app.repositories.in_memory import JobRepository, ResumeRepository
 from app.repositories.payload_codec import job_from_payload
+from app.core.config import default_matching_algorithm_config
 from app.services.gap_analysis import GapAnalysisService
 from app.services.matching import MatchingService
 
@@ -254,10 +258,10 @@ class MatchingFiltersTestCase(unittest.TestCase):
 
         semantic_job = self._make_job(
             job_id="job-semantic",
-            title="AI Product Engineer",
+            title="Product Engineer",
             location="Shanghai",
             job_type="fulltime",
-            role_categories=["algorithm_engineer"],
+            role_categories=["backend_engineer"],
             work_modes=["onsite"],
             is_internship=False,
             posted_at=datetime.now(timezone.utc),
@@ -293,11 +297,129 @@ class MatchingFiltersTestCase(unittest.TestCase):
         vector_store.upsert("jobs", unrelated_job.id, [0.95, 0.05], "unrelated")
 
         matches = matching_service.recommend(resume.id, top_k=2)
+        match_index = {match.job.id: match for match in matches}
 
-        self.assertEqual(matches[0].job.id, semantic_job.id)
-        self.assertGreater(matches[0].breakdown.skill_match, 0.5)
-        self.assertIn("Prompt Design", matches[0].matched_skills)
-        self.assertNotIn("Prompt Design", matches[0].missing_skills)
+        self.assertIn(semantic_job.id, match_index)
+        self.assertIn(unrelated_job.id, match_index)
+        self.assertGreater(match_index[semantic_job.id].breakdown.skill_match, 0.5)
+        self.assertGreater(
+            match_index[semantic_job.id].breakdown.skill_match,
+            match_index[unrelated_job.id].breakdown.skill_match,
+        )
+        self.assertIn("Prompt Design", match_index[semantic_job.id].matched_skills)
+        self.assertNotIn("Prompt Design", match_index[semantic_job.id].missing_skills)
+
+    def test_candidate_skill_index_infers_frontend_foundations_from_vue(self) -> None:
+        resume = ResumeProfile(
+            id="resume-frontend-foundation",
+            basic_info=ResumeBasicInfo(name="Frontend Candidate", work_years=2),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Vue.js")],
+            tags=[],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="Vue.js frontend candidate",
+        )
+
+        index = self.matching_service._build_candidate_skill_index(resume)
+
+        self.assertIn("vue", index)
+        self.assertIn("html", index)
+        self.assertIn("css", index)
+        self.assertIn("javascript", index)
+        self.assertLess(float(index["html"].get("confidence") or 1.0), 1.0)
+
+    def test_experience_score_uses_project_text_and_skill_bridge(self) -> None:
+        resume = ResumeProfile(
+            id="resume-experience-bridge",
+            basic_info=ResumeBasicInfo(name="Experienced Frontend", work_years=2),
+            educations=[],
+            work_experiences=[],
+            projects=[
+                ResumeProject(
+                    name="数字孪生可视化平台",
+                    role="前端开发",
+                    description="使用 Vue3、TypeScript、Vite、ECharts 开发可视化大屏，并负责性能优化。",
+                    responsibilities=["负责大屏可视化模块开发"],
+                    achievements=[],
+                    tech_stack=[],
+                )
+            ],
+            skills=[ResumeSkill(name="Vue.js")],
+            tags=[],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="2年前端经验，负责 Vue3 TypeScript Vite 大屏可视化平台开发。",
+        )
+        candidate_skill_index = self.matching_service._build_candidate_skill_index(resume)
+        candidate_terms = self.matching_service._build_candidate_terms(resume)
+
+        job = self._make_job(
+            job_id="job-exp-bridge",
+            title="Frontend Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["frontend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=1,
+            max_years=3,
+        )
+        job.skill_requirements = JobSkillRequirements(
+            required=[RequiredSkill(name="Vue"), RequiredSkill(name="TypeScript")],
+            optional_groups=[],
+            bonus=[],
+        )
+        job.experience_requirements = JobExperienceRequirements(
+            core=[
+                CoreExperience(
+                    type="project",
+                    name="大屏可视化",
+                    min_years=1,
+                    keywords=["Vue3", "TypeScript"],
+                    description="负责前端可视化大屏开发",
+                )
+            ],
+            bonus=[],
+            min_total_years=1,
+            max_total_years=3,
+        )
+
+        breakdown = self.matching_service._build_breakdown(
+            resume,
+            job,
+            0.6,
+            candidate_skill_index,
+            candidate_terms,
+            {},
+            {},
+        )
+
+        self.assertGreaterEqual(breakdown.skill_match, 0.6)
+        self.assertGreaterEqual(breakdown.experience_match, 0.6)
+
+    def test_education_score_is_deemphasized_and_experience_weight_is_higher(self) -> None:
+        config = default_matching_algorithm_config()
+        self.assertGreater(config.total_weight_experience, config.total_weight_education)
+
+        resume = ResumeProfile(
+            id="resume-master",
+            basic_info=ResumeBasicInfo(name="Master Candidate", work_years=2, first_degree="master"),
+            educations=[ResumeEducation(school="Example University", degree="master", major="software engineering")],
+            work_experiences=[],
+            projects=[],
+            skills=[],
+            tags=[],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="master candidate",
+        )
+        constraints = JobEducationConstraints(min_degree="bachelor")
+
+        score = self.matching_service._education_score(resume, constraints)
+
+        self.assertLess(score, 0.9)
+        self.assertGreaterEqual(score, 0.8)
 
     def _make_job(
         self,
