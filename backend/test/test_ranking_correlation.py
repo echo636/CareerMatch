@@ -23,6 +23,7 @@ from app.bootstrap import build_services
 from app.core.config import get_settings
 from app.core.logging_utils import configure_logging
 from app.job_enrichment import build_job_context_text
+from local_test_config import DEFAULT_RESUME_ID
 from report_manager import resolve_report_paths, write_report_files
 
 
@@ -30,12 +31,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Compare algorithmic matching ranking with LLM-based scoring. "
-            "Computes Spearman rank correlation coefficient."
+            "Computes Spearman rank correlation coefficient. "
+            "When --resume-id is omitted, the script falls back to backend/test/local_test_config.py."
         )
     )
     parser.add_argument(
         "--resume-id",
-        required=True,
+        default=DEFAULT_RESUME_ID,
         help="Resume ID to test.",
     )
     parser.add_argument(
@@ -147,6 +149,11 @@ def render_report(report: dict[str, Any]) -> str:
 
 def main() -> int:
     args = parse_args()
+    args.resume_id = (args.resume_id or "").strip()
+    if not args.resume_id:
+        raise SystemExit(
+            "resume id is required. Pass --resume-id or set DEFAULT_RESUME_ID in backend/test/local_test_config.py"
+        )
     if args.top_k <= 0:
         raise SystemExit("--top-k must be greater than 0")
 

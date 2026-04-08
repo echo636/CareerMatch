@@ -4,11 +4,15 @@ import argparse
 import hashlib
 import json
 import mimetypes
+import os
 import sys
+from time import sleep
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+import urllib.error
+import urllib.request
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 TEST_DIR = Path(__file__).resolve().parent
@@ -22,18 +26,17 @@ except ImportError:  # pragma: no cover - optional in bare environments
     def load_dotenv(*_args, **_kwargs):
         return False
 
+from local_test_config import DEFAULT_RESUME_FILE, DEFAULT_RESUME_ID, LOCAL_TEST_CONFIG
 from report_manager import resolve_report_paths, write_report_files
 
 BOOTSTRAP_IMPORT_ERROR: Exception | None = None
 try:
     from app.bootstrap import build_services
-    from app.clients.llm import QwenLLMClient
     from app.core.config import get_settings
     from app.core.logging_utils import configure_logging
 except Exception as exc:  # pragma: no cover - depends on local runtime environment
     BOOTSTRAP_IMPORT_ERROR = exc
     build_services = None  # type: ignore[assignment]
-    QwenLLMClient = object  # type: ignore[assignment]
     get_settings = None  # type: ignore[assignment]
     configure_logging = None  # type: ignore[assignment]
 
@@ -41,7 +44,9 @@ except Exception as exc:  # pragma: no cover - depends on local runtime environm
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare the built-in matching algorithm with an LLM rerank over the same uploaded-resume candidate pool."
+            "Compare the built-in matching algorithm with an LLM rerank over the same uploaded-resume candidate pool. "
+            "When CLI args are omitted, the script falls back to backend/test/local_test_config.py. "
+            "Rerank model settings can be changed in backend/test/local_test_config.py."
         )
     )
     parser.add_argument("--resume-id", type=str, default="")
@@ -50,7 +55,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--force-reparse", action="store_true")
     parser.add_argument("--output", type=str, default="")
-    return parser.parse_args()
+    args = parser.parse_args()
+    cli_tokens = sys.argv[1:]
+    has_resume_id_flag = any(token == "--resume-id" or token.startswith("--resume-id=") for token in cli_tokens)
+    has_resume_file_flag = any(token == "--resume-file" or token.startswith("--resume-file=") for token in cli_tokens)
+    args.resume_id = (args.resume_id or "").strip()
+    args.resume_file = (args.resume_file or "").strip()
+    if not has_resume_id_flag and not has_resume_file_flag:
+        if DEFAULT_RESUME_FILE.strip():
+            args.resume_file = DEFAULT_RESUME_FILE.strip()
+            args.resume_id = ""
+        elif DEFAULT_RESUME_ID.strip():
+            args.resume_id = DEFAULT_RESUME_ID.strip()
+    return args
 
 
 def now_local() -> datetime:
@@ -463,13 +480,170 @@ def build_job_prompt_payload(job: Any) -> dict[str, Any]:
     }
 
 
+def message_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        return "\n".join(parts).strip()
+    return ""
+
+
+def extract_json_object(content: str) -> str:
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3:
+            stripped = "\n".join(lines[1:-1]).strip()
+    try:
+        json.loads(stripped)
+        return stripped
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    start = stripped.find("{")
+    while start != -1:
+        try:
+            obj, end = decoder.raw_decode(stripped[start:])
+            if isinstance(obj, dict):
+                return stripped[start : start + end]
+        except json.JSONDecodeError:
+            start = stripped.find("{", start + 1)
+            continue
+        start = stripped.find("{", start + 1)
+    return stripped
+
+
+def resolve_rerank_settings(settings: Any) -> dict[str, Any]:
+    rerank = LOCAL_TEST_CONFIG.rerank
+    source = (rerank.source or "backend_client").strip().lower()
+    if source not in {"backend_client", "openai_compatible"}:
+        raise SystemExit(
+            "local_test_config.py: LOCAL_TEST_CONFIG.rerank.source must be "
+            "'backend_client' or 'openai_compatible'."
+        )
+
+    if source == "backend_client":
+        return {
+            "source": source,
+            "provider": (rerank.provider or settings.llm_provider or "backend").strip(),
+            "model": (rerank.model or getattr(settings, "qwen_llm_model", "") or "backend-llm").strip(),
+        }
+
+    provider = (rerank.provider or "openai_compatible").strip()
+    model = (rerank.model or "").strip()
+    api_key = (rerank.api_key or os.getenv("RERANK_API_KEY", "")).strip()
+    chat_url = (rerank.chat_url or os.getenv("RERANK_CHAT_URL", "")).strip()
+    if not model or not api_key or not chat_url:
+        raise SystemExit(
+            "local_test_config.py: when LOCAL_TEST_CONFIG.rerank.source='openai_compatible', "
+            "rerank.model, rerank.api_key, and rerank.chat_url are required."
+        )
+
+    return {
+        "source": source,
+        "provider": provider,
+        "model": model,
+        "api_key": api_key,
+        "chat_url": chat_url,
+        "timeout_sec": max(int(rerank.timeout_sec), 1),
+        "retry_count": max(int(rerank.retry_count), 0),
+        "retry_backoff_sec": max(float(rerank.retry_backoff_sec), 0.0),
+        "temperature": float(rerank.temperature),
+        "auth_header_name": (rerank.auth_header_name or "Authorization").strip() or "Authorization",
+        "auth_prefix": rerank.auth_prefix or "",
+        "request_headers": dict(rerank.request_headers or {}),
+        "extra_body": dict(rerank.extra_body or {}),
+    }
+
+
+def openai_compatible_chat_json(messages: list[dict[str, str]], rerank_settings: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": rerank_settings["model"],
+        "messages": messages,
+        "temperature": rerank_settings["temperature"],
+    }
+    payload.update(rerank_settings["extra_body"])
+    request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    headers = {"Content-Type": "application/json"}
+    headers.update(rerank_settings["request_headers"])
+    headers[rerank_settings["auth_header_name"]] = f"{rerank_settings['auth_prefix']}{rerank_settings['api_key']}"
+
+    max_attempts = int(rerank_settings["retry_count"]) + 1
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        request = urllib.request.Request(
+            url=rerank_settings["chat_url"],
+            data=request_body,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=rerank_settings["timeout_sec"]) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            break
+        except TimeoutError as exc:
+            last_error = exc
+            if attempt >= max_attempts:
+                raise RuntimeError(
+                    f"rerank request timed out after {rerank_settings['timeout_sec']} seconds."
+                ) from exc
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            last_error = exc
+            retryable = exc.code in {408, 429, 500, 502, 503, 504}
+            if not retryable or attempt >= max_attempts:
+                raise RuntimeError(f"rerank request failed with status {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            last_error = exc
+            timeout_reason = isinstance(exc.reason, TimeoutError)
+            retryable = timeout_reason or isinstance(exc.reason, ConnectionResetError) or isinstance(exc.reason, OSError)
+            if not retryable or attempt >= max_attempts:
+                if timeout_reason:
+                    raise RuntimeError(
+                        f"rerank request timed out after {rerank_settings['timeout_sec']} seconds."
+                    ) from exc
+                raise RuntimeError(f"rerank request failed: {exc.reason}") from exc
+
+        sleep(rerank_settings["retry_backoff_sec"])
+    else:  # pragma: no cover - defensive fallback
+        raise RuntimeError("rerank request failed after retries.") from last_error
+
+    choices = result.get("choices") or []
+    if not choices:
+        raise RuntimeError("rerank response did not include choices.")
+    message = choices[0].get("message") or {}
+    content = message_content_to_text(message.get("content"))
+    if not content:
+        raise RuntimeError("rerank response did not include message content.")
+    payload_text = extract_json_object(content)
+    try:
+        payload_obj = json.loads(payload_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"rerank response was not valid JSON: {content}") from exc
+    if not isinstance(payload_obj, dict):
+        raise RuntimeError("rerank response root must be a JSON object.")
+    return payload_obj
+
+
 def llm_rank_candidates(services: Any, resume: Any, compared_candidates: list[dict[str, Any]]) -> dict[str, Any]:
-    llm_client = services.resume_pipeline.llm_client
-    if not isinstance(llm_client, QwenLLMClient):
-        raise RuntimeError("This script currently supports QwenLLMClient only.")
-    chat_json = getattr(llm_client, "_chat_json", None)
-    if not callable(chat_json):
-        raise RuntimeError("Current llm client does not expose a JSON chat helper.")
+    rerank_settings = resolve_rerank_settings(services.settings)
+    if rerank_settings["source"] == "backend_client":
+        llm_client = services.resume_pipeline.llm_client
+        chat_json = getattr(llm_client, "_chat_json", None)
+        if not callable(chat_json):
+            raise RuntimeError("Current backend llm client does not expose a JSON chat helper.")
+    else:
+        chat_json = lambda messages: openai_compatible_chat_json(messages, rerank_settings)
 
     prompt_jobs = [build_job_prompt_payload(item["job"]) for item in compared_candidates]
     prompt_jobs.sort(key=lambda item: str(item["job_id"]))
@@ -540,6 +714,9 @@ def llm_rank_candidates(services: Any, resume: Any, compared_candidates: list[di
             }
 
     return {
+        "source": rerank_settings["source"],
+        "provider": rerank_settings["provider"],
+        "model": rerank_settings["model"],
         "duration_ms": duration_ms,
         "prompt_job_count": len(prompt_jobs),
         "order": ranked_ids,
@@ -623,6 +800,7 @@ def render_report(report: dict[str, Any]) -> str:
     lines.append(f"- Resume Data Source: {report['settings']['resume_data_source']}")
     lines.append(f"- Postgres DSN: {report['settings']['postgres_dsn']}")
     lines.append(f"- Upload Root: {report['settings']['upload_root']}")
+    lines.append(f"- LLM Source: {report['settings']['llm_source']}")
     lines.append(f"- LLM Provider: {report['settings']['llm_provider']}")
     lines.append(f"- LLM Model: {report['settings']['llm_model']}")
     lines.append(f"- Jobs In Store: {report['settings']['job_count']}")
@@ -756,8 +934,9 @@ def main() -> int:
             "resume_data_source": type(services.resume_pipeline.repository).__name__,
             "postgres_dsn": mask_dsn(settings.postgres_dsn),
             "upload_root": str(upload_roots[0]) if upload_roots else str(settings.object_storage_root),
-            "llm_provider": settings.llm_provider,
-            "llm_model": settings.qwen_llm_model,
+            "llm_source": llm_result["source"],
+            "llm_provider": llm_result["provider"],
+            "llm_model": llm_result["model"],
             "job_count": len(services.matching_service.job_repository.list()),
         },
         "selection": {

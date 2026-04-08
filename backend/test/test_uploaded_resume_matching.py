@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - optional in bare environments
 from app.bootstrap import build_services
 from app.core.config import get_settings
 from app.core.logging_utils import configure_logging
+from local_test_config import DEFAULT_RESUME_IDS
 from report_manager import resolve_report_paths, write_report_files
 
 
@@ -30,14 +31,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Test matching flow for uploaded resumes. The script scans backend/uploads/resumes, "
-            "reuses persisted resumes from Postgres when possible, and writes managed reports under backend/test/reports/resume_matching by default."
+            "reuses persisted resumes from Postgres when possible, and writes managed reports under backend/test/reports/resume_matching by default. "
+            "When --resume-id is omitted, the script falls back to backend/test/local_test_config.py before scanning all uploads."
         )
     )
     parser.add_argument(
         "--resume-id",
         dest="resume_ids",
         action="append",
-        default=[],
+        default=None,
         help="Specific resume id to test. Repeat this flag to test multiple resumes.",
     )
     parser.add_argument(
@@ -66,7 +68,12 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional custom markdown report filename. Relative paths are resolved under backend/test; default output goes to backend/test/reports/resume_matching/.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.resume_ids is None:
+        args.resume_ids = [item.strip() for item in DEFAULT_RESUME_IDS if item and item.strip()]
+    else:
+        args.resume_ids = [item.strip() for item in args.resume_ids if item and item.strip()]
+    return args
 
 
 def now_local() -> datetime:
