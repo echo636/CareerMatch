@@ -124,6 +124,22 @@ def build_breakdown_dict(breakdown: Any) -> dict[str, float]:
     }
 
 
+def format_breakdown_summary(breakdown: dict[str, float], include_total: bool = False) -> str:
+    parts: list[str] = []
+    if include_total:
+        parts.append(f"total={breakdown['total']:.4f}")
+    parts.extend(
+        [
+            f"vec={breakdown['vector_similarity']:.4f}",
+            f"skill={breakdown['skill_match']:.4f}",
+            f"exp={breakdown['experience_match']:.4f}",
+            f"edu={breakdown['education_match']:.4f}",
+            f"salary={breakdown['salary_match']:.4f}",
+        ]
+    )
+    return ", ".join(parts)
+
+
 def upload_root_candidates(settings: Any) -> list[Path]:
     candidates = [
         settings.object_storage_root / "resumes",
@@ -571,6 +587,7 @@ def build_disagreements(
     for job_id in algorithm_order:
         item = candidate_index[job_id]
         llm_assessment = llm_assessment_index.get(job_id, {})
+        breakdown = dict(item["breakdown"])
         disagreements.append(
             {
                 "job_id": job_id,
@@ -579,8 +596,9 @@ def build_disagreements(
                 "algorithm_rank": algorithm_ranks[job_id],
                 "llm_rank": llm_ranks[job_id],
                 "rank_shift": llm_ranks[job_id] - algorithm_ranks[job_id],
-                "algorithm_score": item["breakdown"]["total"],
-                "vector_similarity": item["breakdown"]["vector_similarity"],
+                "algorithm_score": breakdown["total"],
+                "vector_similarity": breakdown["vector_similarity"],
+                "algorithm_breakdown": breakdown,
                 "llm_fit_score": llm_assessment.get("fit_score"),
                 "llm_reason": llm_assessment.get("reason"),
                 "llm_risk": llm_assessment.get("risk"),
@@ -672,8 +690,9 @@ def render_report(report: dict[str, Any]) -> str:
     lines.append("## Largest Rank Gaps")
     lines.append("")
     for item in report["disagreements"][: max(report["selection"]["top_k"], 8)]:
+        breakdown = item["algorithm_breakdown"]
         lines.append(
-            f"- {item['job_title']} | company={item['company']} | algorithm_rank={item['algorithm_rank']} | llm_rank={item['llm_rank']} | shift={item['rank_shift']:+d} | algorithm_score={item['algorithm_score']:.4f} | llm_fit_score={item.get('llm_fit_score')}"
+            f"- {item['job_title']} | company={item['company']} | algorithm_rank={item['algorithm_rank']} | llm_rank={item['llm_rank']} | shift={item['rank_shift']:+d} | algorithm_score={item['algorithm_score']:.4f} ({format_breakdown_summary(breakdown)}) | llm_fit_score={item.get('llm_fit_score')}"
         )
         lines.append(f"  llm_reason: {item.get('llm_reason') or '-'}")
     lines.append("")
