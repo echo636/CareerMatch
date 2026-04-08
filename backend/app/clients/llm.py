@@ -17,6 +17,7 @@ from app.job_enrichment import (
     clean_text,
     first_present,
     infer_education,
+    infer_job_tags,
     infer_highlights,
     infer_responsibilities,
     infer_salary,
@@ -626,21 +627,6 @@ class QwenLLMClient(BaseLLMClient):
         if not languages:
             languages = [self._normalize_language(item) for item in inferred_education.get("languages") or []]
 
-        tags = [self._normalize_job_tag(item) for item in self._as_list(data.get("tags"))]
-        if not tags:
-            tags = [self._normalize_job_tag(item) for item in self._as_list(original_payload.get("tags"))]
-        if not tags:
-            tags = [
-                *[
-                    self._normalize_job_tag({"name": skill, "category": "tech", "weight": 5 if index < 3 else 4})
-                    for index, skill in enumerate(inferred_skills[:8])
-                ],
-                *[
-                    self._normalize_job_tag({"name": topic, "category": "project", "weight": 4})
-                    for topic in inferred_topics[:3]
-                ],
-            ]
-
         salary_negotiable = first_present(
             self._bool_or_none(basic_info.get("salary_negotiable")),
             self._bool_or_none(source_basic_info.get("salary_negotiable")),
@@ -671,6 +657,41 @@ class QwenLLMClient(BaseLLMClient):
             self._clean_text(original_payload.get("intern_salary_unit")),
             inferred_salary.get("intern_salary_unit"),
         )
+        normalized_education_constraints = {
+            "min_degree": self._clean_text(education_constraints.get("min_degree")) or self._clean_text(source_education_constraints.get("min_degree")) or self._clean_text(inferred_education.get("min_degree")),
+            "prefer_degrees": self._string_list(education_constraints.get("prefer_degrees")) or self._string_list(source_education_constraints.get("prefer_degrees")) or list(inferred_education.get("prefer_degrees") or []),
+            "required_majors": self._string_list(education_constraints.get("required_majors")) or self._string_list(source_education_constraints.get("required_majors")) or list(inferred_education.get("required_majors") or []),
+            "preferred_majors": self._string_list(education_constraints.get("preferred_majors")) or self._string_list(source_education_constraints.get("preferred_majors")) or list(inferred_education.get("preferred_majors") or []),
+            "languages": languages,
+            "certifications": self._string_list(education_constraints.get("certifications")) or self._string_list(source_education_constraints.get("certifications")) or list(inferred_education.get("certifications") or []),
+            "age_range": self._clean_text(education_constraints.get("age_range")) or self._clean_text(source_education_constraints.get("age_range")) or self._clean_text(inferred_education.get("age_range")),
+            "other": self._string_list(education_constraints.get("other")) or self._string_list(source_education_constraints.get("other")) or list(inferred_education.get("other") or []),
+        }
+        normalized_tags = infer_job_tags(
+            {
+                **original_payload,
+                "tags": self._as_list(data.get("tags")) or self._as_list(original_payload.get("tags")),
+            },
+            skills=[
+                *(item.get("name") for item in required_items if item.get("name")),
+                *(
+                    skill.get("name")
+                    for group in optional_groups
+                    for skill in group.get("skills") or []
+                    if skill.get("name")
+                ),
+                *(item.get("name") for item in bonus_items if item.get("name")),
+                *inferred_skills,
+            ],
+            topics=[
+                *(item.get("name") for item in core_items if item.get("name")),
+                *(item.get("name") for item in bonus_experience_items if item.get("name")),
+                *inferred_topics,
+            ],
+            education_constraints=normalized_education_constraints,
+            highlights=highlights,
+        )
+        tags = [self._normalize_job_tag(item) for item in normalized_tags]
 
         return {
             "id": self._clean_text(data.get("id")) or self._clean_text(original_payload.get("id")) or self._clean_text(original_payload.get("job_id")) or f"job-{abs(hash(context_text or title)) % 100000}",
@@ -713,14 +734,14 @@ class QwenLLMClient(BaseLLMClient):
                 ),
             },
             "education_constraints": {
-                "min_degree": self._clean_text(education_constraints.get("min_degree")) or self._clean_text(source_education_constraints.get("min_degree")) or self._clean_text(inferred_education.get("min_degree")),
-                "prefer_degrees": self._string_list(education_constraints.get("prefer_degrees")) or self._string_list(source_education_constraints.get("prefer_degrees")) or list(inferred_education.get("prefer_degrees") or []),
-                "required_majors": self._string_list(education_constraints.get("required_majors")) or self._string_list(source_education_constraints.get("required_majors")) or list(inferred_education.get("required_majors") or []),
-                "preferred_majors": self._string_list(education_constraints.get("preferred_majors")) or self._string_list(source_education_constraints.get("preferred_majors")) or list(inferred_education.get("preferred_majors") or []),
-                "languages": languages,
-                "certifications": self._string_list(education_constraints.get("certifications")) or self._string_list(source_education_constraints.get("certifications")) or list(inferred_education.get("certifications") or []),
-                "age_range": self._clean_text(education_constraints.get("age_range")) or self._clean_text(source_education_constraints.get("age_range")) or self._clean_text(inferred_education.get("age_range")),
-                "other": self._string_list(education_constraints.get("other")) or self._string_list(source_education_constraints.get("other")) or list(inferred_education.get("other") or []),
+                "min_degree": normalized_education_constraints["min_degree"],
+                "prefer_degrees": normalized_education_constraints["prefer_degrees"],
+                "required_majors": normalized_education_constraints["required_majors"],
+                "preferred_majors": normalized_education_constraints["preferred_majors"],
+                "languages": normalized_education_constraints["languages"],
+                "certifications": normalized_education_constraints["certifications"],
+                "age_range": normalized_education_constraints["age_range"],
+                "other": normalized_education_constraints["other"],
             },
             "tags": tags,
         }

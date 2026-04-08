@@ -93,6 +93,45 @@ MAJOR_STOPWORDS = {
     "统招",
 }
 TOPIC_LEADING_VERBS = ("负责", "参与", "协助", "推进", "完成", "执行", "主导", "支持", "开展", "进行")
+VALID_TAG_CATEGORIES = {"tech", "project", "domain", "industry", "education", "language", "general"}
+TAG_CATEGORY_LIMITS = {
+    "tech": 8,
+    "project": 4,
+    "domain": 4,
+    "industry": 3,
+    "education": 4,
+    "language": 3,
+    "general": 3,
+}
+TAG_CATEGORY_PRIORITY = {
+    "tech": 0,
+    "project": 1,
+    "domain": 2,
+    "industry": 3,
+    "education": 4,
+    "language": 5,
+    "general": 6,
+}
+GENERIC_TAG_BLOCKLIST = {
+    "engineer",
+    "developer",
+    "software",
+    "job",
+    "position",
+    "experience",
+    "responsibility",
+    "responsibilities",
+    "requirement",
+    "requirements",
+    "fulltime",
+    "full-time",
+    "intern",
+    "internship",
+    "campus",
+    "remote",
+    "onsite",
+    "hybrid",
+}
 
 
 def clean_text(value: Any) -> str | None:
@@ -145,6 +184,9 @@ def first_present(*values: Any) -> Any:
 def build_job_context_text(payload: dict[str, Any]) -> str:
     basic_info = payload.get("basic_info") or {}
     jd_text = _extract_job_description_text(payload.get("jd"))
+    skill_requirements = payload.get("skill_requirements") or {}
+    experience_requirements = payload.get("experience_requirements") or {}
+    education_constraints = payload.get("education_constraints") or {}
     parts: list[str] = []
 
     primary_text = first_present(
@@ -175,6 +217,40 @@ def build_job_context_text(payload: dict[str, Any]) -> str:
         ]
         if clean_text(value)
     )
+    parts.extend(string_list(payload.get("responsibilities")))
+    parts.extend(string_list(basic_info.get("responsibilities")))
+    parts.extend(string_list(payload.get("highlights")))
+    parts.extend(string_list(basic_info.get("highlights")))
+    for item in (skill_requirements.get("required") or []) + (skill_requirements.get("bonus") or []):
+        if not isinstance(item, dict):
+            continue
+        parts.extend(value for value in [item.get("name"), item.get("description")] if clean_text(value))
+    for group in skill_requirements.get("optional_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        parts.extend(value for value in [group.get("group_name"), group.get("description")] if clean_text(value))
+        for item in group.get("skills") or []:
+            if not isinstance(item, dict):
+                continue
+            parts.extend(value for value in [item.get("name"), item.get("description")] if clean_text(value))
+    for item in (experience_requirements.get("core") or []) + (experience_requirements.get("bonus") or []):
+        if not isinstance(item, dict):
+            continue
+        parts.extend(value for value in [item.get("name"), item.get("description")] if clean_text(value))
+        parts.extend(string_list(item.get("keywords")))
+    parts.extend(string_list(education_constraints.get("required_majors")))
+    parts.extend(string_list(education_constraints.get("preferred_majors")))
+    parts.extend(string_list(education_constraints.get("certifications")))
+    for item in education_constraints.get("languages") or []:
+        if not isinstance(item, dict):
+            continue
+        parts.extend(value for value in [item.get("language"), item.get("level")] if clean_text(value))
+    for tag in payload.get("tags") or []:
+        if not isinstance(tag, dict):
+            continue
+        name = clean_text(tag.get("name"))
+        if name:
+            parts.append(name)
     for tag in string_list(payload.get("skill_tags")):
         parts.append(tag)
     return "\n".join(_dedupe(parts))
@@ -287,6 +363,66 @@ def infer_topics(payload: dict[str, Any], title: str | None, text: str) -> list[
                 candidates.append(name)
 
     return _dedupe(candidates)
+
+
+def infer_job_tags(
+    payload: dict[str, Any],
+    *,
+    skills: list[str],
+    topics: list[str],
+    education_constraints: dict[str, Any] | None = None,
+    highlights: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    builder = _JobTagBuilder()
+    constraints = education_constraints or {}
+
+    for item in payload.get("tags") or []:
+        if not isinstance(item, dict):
+            continue
+        name = clean_text(item.get("name"))
+        if not name:
+            continue
+        category = _coerce_tag_category(name, item.get("category"))
+        weight = item.get("weight")
+        builder.add(name, category, int(weight) if isinstance(weight, (int, float)) else None)
+
+    for index, skill in enumerate(_dedupe(skills)[: TAG_CATEGORY_LIMITS["tech"]]):
+        builder.add(skill, "tech", 5 if index < 3 else 4)
+
+    domain_candidates = [
+        item
+        for item in _split_delimited_values(payload.get("job_keys"))
+        if not _looks_like_skill_tag(item)
+    ]
+    for item in domain_candidates[: TAG_CATEGORY_LIMITS["domain"]]:
+        builder.add(item, "domain", 3)
+
+    for index, topic in enumerate(_dedupe(topics)[: TAG_CATEGORY_LIMITS["project"]]):
+        builder.add(topic, "project", 4 if index < 2 else 3)
+
+    for item in _split_delimited_values(payload.get("company_industry"))[: TAG_CATEGORY_LIMITS["industry"]]:
+        builder.add(item, "industry", 3)
+
+    for item in string_list(constraints.get("required_majors"))[:3]:
+        builder.add(item, "education", 3)
+    for item in string_list(constraints.get("preferred_majors"))[:2]:
+        builder.add(item, "education", 2)
+    for item in string_list(constraints.get("certifications"))[:2]:
+        builder.add(item, "education", 2)
+
+    for item in constraints.get("languages") or []:
+        if not isinstance(item, dict):
+            continue
+        name = clean_text(item.get("language"))
+        if not name:
+            continue
+        builder.add(name, "language", 3 if item.get("required") is not False else 2)
+
+    for item in (highlights or [])[: TAG_CATEGORY_LIMITS["general"]]:
+        if _looks_like_general_tag(item):
+            builder.add(item, "general", 2)
+
+    return builder.finalize()
 
 
 def infer_responsibilities(payload: dict[str, Any], text: str) -> list[str]:
@@ -429,6 +565,43 @@ def infer_education(text: str) -> dict[str, Any]:
     }
 
 
+class _JobTagBuilder:
+    def __init__(self) -> None:
+        self._items: dict[str, dict[str, Any]] = {}
+
+    def add(self, name: str, category: str, weight: int | None = None) -> None:
+        cleaned = clean_text(name)
+        if not cleaned:
+            return
+        if category not in VALID_TAG_CATEGORIES:
+            return
+        if not _is_meaningful_tag_name(cleaned):
+            return
+        item = {
+            "name": cleaned,
+            "category": category,
+            "weight": int(weight or _default_tag_weight(category)),
+        }
+        key = _tag_key(cleaned, category)
+        current = self._items.get(key)
+        if current is None or _prefer_tag(item, current):
+            self._items[key] = item
+
+    def finalize(self) -> list[dict[str, Any]]:
+        grouped: dict[str, list[dict[str, Any]]] = {category: [] for category in VALID_TAG_CATEGORIES}
+        for item in self._items.values():
+            grouped[item["category"]].append(item)
+
+        results: list[dict[str, Any]] = []
+        for category in sorted(TAG_CATEGORY_PRIORITY, key=lambda item: TAG_CATEGORY_PRIORITY[item]):
+            items = sorted(
+                grouped.get(category, []),
+                key=lambda item: (-int(item["weight"]), item["name"].lower()),
+            )
+            results.extend(items[: TAG_CATEGORY_LIMITS.get(category, len(items))])
+        return results
+
+
 def _extract_section_items(text: str, start_markers: list[str], end_markers: list[str], max_items: int) -> list[str]:
     for marker in start_markers:
         section = _extract_section_text(text, marker, end_markers)
@@ -451,6 +624,64 @@ def _extract_section_text(text: str, start_marker: str, end_markers: list[str]) 
     if end_positions:
         section = section[: min(end_positions)]
     return clean_text(section)
+
+
+def _default_tag_weight(category: str) -> int:
+    if category == "tech":
+        return 4
+    if category == "project":
+        return 4
+    if category in {"domain", "industry", "education", "language"}:
+        return 3
+    return 2
+
+
+def _coerce_tag_category(name: str, category: Any) -> str:
+    category_text = (clean_text(category) or "").lower()
+    if category_text in VALID_TAG_CATEGORIES:
+        if category_text != "general" or not _looks_like_skill_tag(name):
+            return category_text
+    if _looks_like_skill_tag(name):
+        return "tech"
+    return "general"
+
+
+def _tag_key(name: str, category: str) -> str:
+    if category == "tech":
+        return f"tech:{name.strip().lower()}"
+    return clean_text(name).lower()
+
+
+def _prefer_tag(candidate: dict[str, Any], current: dict[str, Any]) -> bool:
+    candidate_priority = TAG_CATEGORY_PRIORITY[candidate["category"]]
+    current_priority = TAG_CATEGORY_PRIORITY[current["category"]]
+    if candidate_priority != current_priority:
+        return candidate_priority < current_priority
+    return int(candidate["weight"]) > int(current["weight"])
+
+
+def _is_meaningful_tag_name(value: str) -> bool:
+    text = clean_text(value)
+    if not text:
+        return False
+    lowered = text.lower()
+    if lowered in GENERIC_TAG_BLOCKLIST:
+        return False
+    if len(text) < 2 or len(text) > 32:
+        return False
+    if len(text.split()) > 6:
+        return False
+    return True
+
+
+def _looks_like_skill_tag(value: str) -> bool:
+    normalized = clean_text(value)
+    if not normalized:
+        return False
+    if _extract_skills(normalized):
+        return True
+    lowered = normalized.lower()
+    return lowered in {"mini program", "wechat mini program", "uniapp", "flutter", "webgl"}
 
 
 def _normalize_topic_candidate(value: str) -> str | None:
@@ -481,6 +712,19 @@ def _normalize_highlight_candidate(value: str) -> str | None:
     if re.fullmatch(r"[A-Za-z\u4e00-\u9fa5]+(?:/[A-Za-z\u4e00-\u9fa5]+)+", normalized):
         return None
     return normalized
+
+
+def _looks_like_general_tag(value: str) -> bool:
+    text = clean_text(value)
+    if not text:
+        return False
+    if not _is_meaningful_tag_name(text):
+        return False
+    if _looks_like_skill_tag(text):
+        return False
+    if len(text) > 24:
+        return False
+    return True
 
 
 def _looks_like_highlight(sentence: str) -> bool:
