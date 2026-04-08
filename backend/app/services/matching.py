@@ -58,6 +58,32 @@ FRONTEND_SIGNAL_SKILLS = FRONTEND_FRAMEWORK_SKILLS | {
     "echarts",
     "uniapp",
 }
+BACKEND_SIGNAL_SKILLS = {
+    "java",
+    "spring",
+    "spring boot",
+    "python",
+    "django",
+    "flask",
+    "fastapi",
+    "php",
+    "laravel",
+    "go",
+    "mysql",
+    "postgresql",
+    "redis",
+}
+MOBILE_SIGNAL_SKILLS = {
+    "android",
+    "ios",
+    "flutter",
+    "react native",
+    "swift",
+    "objective-c",
+    "kotlin",
+    "uniapp",
+}
+DIRECTIONAL_SIGNAL_SKILLS = FRONTEND_SIGNAL_SKILLS | BACKEND_SIGNAL_SKILLS | MOBILE_SIGNAL_SKILLS
 GIT_PLATFORM_SKILLS = {"gitee", "github", "gitlab"}
 TEXT_DERIVED_SKILL_CONFIDENCE = 0.92
 INFERRED_FOUNDATION_CONFIDENCE = 0.78
@@ -470,7 +496,46 @@ class MatchingService:
         min_tag_count = self.algorithm_config.direction_mismatch_min_tag_count
         if len(resume_tags) < min_tag_count or len(job_tags) < min_tag_count:
             return False
-        return len(resume_tags & job_tags) == 0
+        if resume_tags & job_tags:
+            return False
+        return not self._has_directional_alignment(resume, job)
+
+    def _has_directional_alignment(self, resume: ResumeProfile, job: JobProfile) -> bool:
+        candidate_roles = self._resume_role_categories(resume)
+        job_roles = {value.lower() for value in job.filter_facets.role_categories}
+
+        if candidate_roles & job_roles:
+            return True
+        if "fullstack_engineer" in candidate_roles and job_roles & {"frontend_engineer", "backend_engineer"}:
+            return True
+        if "fullstack_engineer" in job_roles and candidate_roles & {"frontend_engineer", "backend_engineer"}:
+            return True
+
+        resume_signals = self._directional_signal_skills(
+            [
+                resume.basic_info.current_title or "",
+                *resume.skill_names[:24],
+                *resume.project_keywords[:12],
+            ]
+        )
+        job_signals = self._directional_signal_skills(
+            [
+                job.title,
+                *job.hard_requirements[:12],
+                *job.skills[:20],
+                *job.project_keywords[:12],
+            ]
+        )
+        return bool(resume_signals & job_signals)
+
+    def _directional_signal_skills(self, values: list[str]) -> set[str]:
+        signals: set[str] = set()
+        for value in values:
+            for expanded_name in self._expand_skill_names(value):
+                normalized = self._normalize_skill(expanded_name)
+                if normalized in DIRECTIONAL_SIGNAL_SKILLS:
+                    signals.add(normalized)
+        return signals
 
     def _clear_role_mismatch(self, resume: ResumeProfile, job: JobProfile) -> bool:
         candidate_roles = self._resume_role_categories(resume)

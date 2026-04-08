@@ -21,12 +21,14 @@ from app.domain.models import (
     JobFilterFacets,
     JobProfile,
     JobSkillRequirements,
+    JobTag,
     MatchFilters,
     ResumeBasicInfo,
     ResumeEducation,
     ResumeProfile,
     ResumeProject,
     ResumeSkill,
+    ResumeTag,
     RequiredSkill,
     SalaryRange,
 )
@@ -398,6 +400,124 @@ class MatchingFiltersTestCase(unittest.TestCase):
 
         self.assertGreaterEqual(breakdown.skill_match, 0.6)
         self.assertGreaterEqual(breakdown.experience_match, 0.6)
+
+    def test_direction_mismatch_allows_same_role_direction_despite_zero_tag_overlap(self) -> None:
+        resume = ResumeProfile(
+            id="resume-direction-frontend",
+            basic_info=ResumeBasicInfo(name="Frontend Candidate", current_title="Frontend Engineer", work_years=2),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Vue"), ResumeSkill(name="TypeScript")],
+            tags=[
+                ResumeTag(name="GIS", category="domain"),
+                ResumeTag(name="Visualization", category="tech"),
+                ResumeTag(name="Digital Twin", category="industry"),
+            ],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="2 years frontend engineer, Vue and TypeScript",
+        )
+        job = self._make_job(
+            job_id="job-direction-frontend",
+            title="Frontend Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["frontend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=1,
+            max_years=3,
+        )
+        job.tags = [
+            JobTag(name="Advertising", category="domain"),
+            JobTag(name="Growth", category="industry"),
+            JobTag(name="A/B Testing", category="tech"),
+        ]
+
+        self.assertFalse(self.matching_service._direction_mismatch(resume, job))
+
+    def test_direction_mismatch_allows_skill_direction_overlap_for_generic_titles(self) -> None:
+        resume = ResumeProfile(
+            id="resume-direction-skill-overlap",
+            basic_info=ResumeBasicInfo(name="Frontend Candidate", work_years=2),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Vue"), ResumeSkill(name="TypeScript"), ResumeSkill(name="ECharts")],
+            tags=[
+                ResumeTag(name="GIS", category="domain"),
+                ResumeTag(name="Visualization", category="tech"),
+                ResumeTag(name="Digital Twin", category="industry"),
+            ],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="Vue TypeScript frontend candidate",
+        )
+        job = self._make_job(
+            job_id="job-direction-generic",
+            title="Software Development Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=[],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=1,
+            max_years=3,
+        )
+        job.skill_requirements = JobSkillRequirements(
+            required=[RequiredSkill(name="Vue"), RequiredSkill(name="TypeScript")],
+            optional_groups=[],
+            bonus=[],
+        )
+        job.tags = [
+            JobTag(name="Advertising", category="domain"),
+            JobTag(name="Growth", category="industry"),
+            JobTag(name="Operations Platform", category="tech"),
+        ]
+
+        self.assertFalse(self.matching_service._direction_mismatch(resume, job))
+
+    def test_direction_mismatch_still_filters_conflicting_direction(self) -> None:
+        resume = ResumeProfile(
+            id="resume-direction-conflict",
+            basic_info=ResumeBasicInfo(name="Frontend Candidate", current_title="Frontend Engineer", work_years=2),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Vue"), ResumeSkill(name="TypeScript")],
+            tags=[
+                ResumeTag(name="GIS", category="domain"),
+                ResumeTag(name="Visualization", category="tech"),
+                ResumeTag(name="Digital Twin", category="industry"),
+            ],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="2 years frontend engineer, Vue and TypeScript",
+        )
+        job = self._make_job(
+            job_id="job-direction-backend",
+            title="Backend Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=1,
+            max_years=3,
+        )
+        job.skill_requirements = JobSkillRequirements(
+            required=[RequiredSkill(name="Java"), RequiredSkill(name="Spring Boot")],
+            optional_groups=[],
+            bonus=[],
+        )
+        job.tags = [
+            JobTag(name="Payments", category="domain"),
+            JobTag(name="Trading", category="industry"),
+            JobTag(name="Microservices", category="tech"),
+        ]
+
+        self.assertTrue(self.matching_service._direction_mismatch(resume, job))
 
     def test_education_score_is_deemphasized_and_experience_weight_is_higher(self) -> None:
         config = default_matching_algorithm_config()
