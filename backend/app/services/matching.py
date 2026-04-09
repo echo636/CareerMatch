@@ -822,6 +822,9 @@ class MatchingService:
         title_skill_alignment = self._title_primary_skill_alignment(job, candidate_skill_index, skill_vector_cache)
         if title_skill_alignment == 0.0:
             skill_match = max(min(skill_match * 0.25, 0.10), round(transition_score * 0.6, 4))
+        elif title_skill_alignment < 0.5:
+            alignment_factor = 0.5 + title_skill_alignment
+            skill_match = round(skill_match * alignment_factor, 4)
 
         core_experience_scores = self._core_experience_scores(
             resume,
@@ -1161,6 +1164,7 @@ class MatchingService:
 
     def _hard_skill_penalty(
         self,
+        resume: ResumeProfile,
         job: JobProfile,
         required_scores: list[float],
         candidate_skill_index: dict[str, dict[str, float | str | None]],
@@ -1517,9 +1521,14 @@ class MatchingService:
                 template = self._job_template_signature(candidate.job)
                 if (company, title) in seen_company_title:
                     score -= 0.05
-                score -= seen_companies.get(company, 0) * 0.02
+                company_count = seen_companies.get(company, 0)
+                score -= company_count * 0.04
+                if company_count >= 3:
+                    score -= 0.15
                 score -= seen_titles.get(title, 0) * 0.015
-                score -= seen_templates.get(template, 0) * 0.045
+                template_hits = seen_templates.get(template, 0)
+                if template_hits >= 1:
+                    score -= 0.08 * template_hits
                 score -= self._generic_job_penalty(candidate.job)
                 if score > best_score:
                     best_score = score
@@ -1549,10 +1558,10 @@ class MatchingService:
         searchable_text = f"{job.title} {job.summary}".lower()
         if any(pattern in searchable_text for pattern in GENERIC_ROLE_PATTERNS):
             return 0.03
-        if "杞欢寮€鍙戝伐绋嬪笀" in searchable_text and any(
-            token in searchable_text for token in ("鍓嶇", "鍚庣", "娴嬭瘯")
+        if "软件开发工程师" in searchable_text and any(
+            token in searchable_text for token in ("前端", "后端", "测试")
         ):
-            return 0.02
+            return 0.04
         return 0.0
 
     def _ensure_aux_text_vector(
