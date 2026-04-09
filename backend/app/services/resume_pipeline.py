@@ -11,6 +11,8 @@ from app.core.logging_utils import get_logger
 from app.domain.models import (
     ResumeBasicInfo,
     ResumeEducation,
+    build_resume_filter_facets,
+    build_resume_standard_tags,
     ResumeProfile,
     ResumeProject,
     ResumeSkill,
@@ -78,6 +80,8 @@ class ResumePipelineService:
             source_content_type=source_content_type,
             source_object_key=source_object_key,
         )
+        resume.tags = [*resume.tags, *build_resume_standard_tags(resume)]
+        resume.filter_facets = build_resume_filter_facets(resume)
         self._ensure_vector("resumes", resume.id, self._vector_payload(resume))
         saved_resume = self.repository.save(resume)
         logger.info(
@@ -292,5 +296,8 @@ class ResumePipelineService:
         resume.work_experiences = [self._build_work_experience(item) for item in merged]
         resume.basic_info.current_title = next_current_title
         resume.basic_info.current_company = next_current_company
+        resume.tags = [tag for tag in resume.tags if not getattr(tag, "filterable", False)]
+        resume.tags.extend(build_resume_standard_tags(resume))
+        resume.filter_facets = build_resume_filter_facets(resume)
         self.repository.save(resume)
         return True

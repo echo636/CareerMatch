@@ -11,6 +11,7 @@ from app.domain.models import (
     BonusExperience,
     BonusSkill,
     CoreExperience,
+    build_job_standard_tags,
     JobFilterFacets,
     JobBasicInfo,
     JobEducationConstraints,
@@ -64,6 +65,26 @@ class JobPipelineService:
 
     def _normalize(self, record: dict[str, Any]) -> JobProfile:
         extracted = self.llm_client.extract_job(record)
+        base_tags = [
+            item
+            for item in (self._build_tag(tag) for tag in extracted.get("tags") or [])
+            if item is not None
+        ]
+        basic_info_payload = extracted.get("basic_info") or {}
+        experience_payload = extracted.get("experience_requirements") or {}
+        derived_tags = build_job_standard_tags(
+            title=str(basic_info_payload.get("title") or extracted.get("title") or "Untitled Role"),
+            location=basic_info_payload.get("location"),
+            job_type=basic_info_payload.get("job_type"),
+            summary=basic_info_payload.get("summary"),
+            tags=base_tags,
+            min_total_years=experience_payload.get("min_total_years"),
+            max_total_years=experience_payload.get("max_total_years"),
+            salary_min=basic_info_payload.get("salary_min"),
+            salary_max=basic_info_payload.get("salary_max"),
+            intern_salary_amount=basic_info_payload.get("intern_salary_amount"),
+        )
+        tags = [*base_tags, *derived_tags]
         job = JobProfile(
             id=extracted["id"],
             company=extracted["company"],
@@ -75,11 +96,7 @@ class JobPipelineService:
             education_constraints=self._build_education_constraints(
                 extracted.get("education_constraints") or {}
             ),
-            tags=[
-                item
-                for item in (self._build_tag(tag) for tag in extracted.get("tags") or [])
-                if item is not None
-            ],
+            tags=tags,
             filter_facets=self._build_filter_facets(extracted, record),
         )
         logger.info(
@@ -99,6 +116,20 @@ class JobPipelineService:
             for item in (self._build_tag(tag) for tag in extracted.get("tags") or [])
             if item is not None
         ]
+        tags.extend(
+            build_job_standard_tags(
+                title=str(basic_info.get("title") or extracted.get("title") or "Untitled Role"),
+                location=basic_info.get("location"),
+                job_type=basic_info.get("job_type"),
+                summary=basic_info.get("summary"),
+                tags=tags,
+                min_total_years=experience_requirements.get("min_total_years"),
+                max_total_years=experience_requirements.get("max_total_years"),
+                salary_min=basic_info.get("salary_min"),
+                salary_max=basic_info.get("salary_max"),
+                intern_salary_amount=basic_info.get("intern_salary_amount"),
+            )
+        )
         raw_posted_at_values = [
             extracted.get("posted_at"),
             record.get("posted_at"),

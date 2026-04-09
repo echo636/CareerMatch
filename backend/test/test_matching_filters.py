@@ -13,6 +13,10 @@ from app.clients.embedding import BaseEmbeddingClient
 from app.clients.llm import BaseLLMClient
 from app.clients.vector_store import InMemoryVectorStore
 from app.domain.models import (
+    build_job_filter_facets,
+    build_job_standard_tags,
+    build_resume_filter_facets,
+    build_resume_standard_tags,
     CoreExperience,
     GapInsight,
     JobBasicInfo,
@@ -756,6 +760,151 @@ class MatchingFiltersTestCase(unittest.TestCase):
         self.assertGreaterEqual(breakdown.role_level_fit, 0.9)
         self.assertGreaterEqual(breakdown.penalty_multiplier, 0.45)
         self.assertGreaterEqual(breakdown.total, 0.2)
+
+    def test_resume_filter_facets_infer_role_city_and_salary(self) -> None:
+        resume = ResumeProfile(
+            id="resume-filter-facets",
+            basic_info=ResumeBasicInfo(
+                name="Lead Candidate",
+                current_title="Backend Architect",
+                current_city="Shanghai",
+                work_years=9,
+            ),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Java"), ResumeSkill(name="Spring Cloud")],
+            tags=[ResumeTag(name="AI", category="tech")],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="期望城市: Shanghai/Hangzhou\n支持远程办公\n有Agent与RAG落地经验",
+        )
+
+        facets = build_resume_filter_facets(resume)
+
+        self.assertIn("backend_engineer", facets.role_categories)
+        self.assertIn("Shanghai", facets.target_cities)
+        self.assertIn("Hangzhou", facets.target_cities)
+        self.assertIn("remote", facets.preferred_work_modes)
+        self.assertEqual(facets.seniority_level, "lead")
+        self.assertIsNotNone(facets.inferred_salary_min)
+        self.assertIsNotNone(facets.inferred_salary_max)
+        self.assertGreater(facets.inferred_salary_min or 0, 0)
+        self.assertGreater(facets.inferred_salary_max or 0, facets.inferred_salary_min or 0)
+
+    def test_salary_score_uses_inferred_resume_salary_when_expected_salary_missing(self) -> None:
+        resume = ResumeProfile(
+            id="resume-inferred-salary",
+            basic_info=ResumeBasicInfo(
+                name="Senior Candidate",
+                current_title="Senior Backend Engineer",
+                current_city="Shanghai",
+                work_years=9,
+            ),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Java"), ResumeSkill(name="Spring Boot")],
+            tags=[],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="9 years backend engineer, distributed systems, target city: Shanghai",
+        )
+        resume.filter_facets = build_resume_filter_facets(resume)
+
+        low_salary_job = self._make_job(
+            job_id="job-low-salary",
+            title="Backend Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=3,
+            max_years=5,
+        )
+        low_salary_job.basic_info.salary_min = 12000
+        low_salary_job.basic_info.salary_max = 17000
+
+        strong_salary_job = self._make_job(
+            job_id="job-strong-salary",
+            title="Backend Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=5,
+            max_years=10,
+        )
+        strong_salary_job.basic_info.salary_min = 30000
+        strong_salary_job.basic_info.salary_max = 40000
+
+        low_score = self.matching_service._salary_score(resume, low_salary_job)
+        strong_score = self.matching_service._salary_score(resume, strong_salary_job)
+
+        self.assertLess(low_score, 0.3)
+        self.assertGreater(strong_score, low_score)
+
+    def test_job_filter_facets_are_derived_from_standardized_tags(self) -> None:
+        base_tags = [JobTag(name="LLM", category="tech"), JobTag(name="Healthcare", category="domain")]
+        derived_tags = build_job_standard_tags(
+            title="Senior Backend AI Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            summary="Remote-friendly AI infra backend role",
+            tags=base_tags,
+            min_total_years=5,
+            max_total_years=10,
+            salary_min=30000,
+            salary_max=45000,
+            intern_salary_amount=None,
+        )
+        facets = build_job_filter_facets(
+            title="Senior Backend AI Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            summary="Remote-friendly AI infra backend role",
+            min_total_years=5,
+            max_total_years=10,
+            tags=base_tags + derived_tags,
+            raw_posted_at_values=[],
+        )
+
+        self.assertIn("backend_engineer", facets.role_categories)
+        self.assertIn("remote", facets.work_modes)
+        self.assertIn("Shanghai", facets.city_tokens)
+        self.assertIn("llm", facets.ai_capabilities)
+        self.assertEqual(facets.seniority_level, "senior")
+        self.assertEqual(facets.salary_band, "lead")
+
+    def test_resume_filter_facets_can_be_rebuilt_from_standardized_tags(self) -> None:
+        resume = ResumeProfile(
+            id="resume-structured-tags",
+            basic_info=ResumeBasicInfo(
+                name="Structured Candidate",
+                current_title="Backend Architect",
+                current_city="Shanghai",
+                work_years=9,
+            ),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Java"), ResumeSkill(name="Spring Cloud"), ResumeSkill(name="LLM")],
+            tags=[ResumeTag(name="Healthcare", category="domain")],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="期望城市: Shanghai/Hangzhou\n支持远程办公\n有Agent与RAG落地经验",
+        )
+        resume.tags.extend(build_resume_standard_tags(resume))
+
+        facets = build_resume_filter_facets(resume)
+
+        self.assertIn("backend_engineer", facets.role_categories)
+        self.assertIn("Shanghai", facets.target_cities)
+        self.assertIn("Hangzhou", facets.target_cities)
+        self.assertIn("remote", facets.preferred_work_modes)
+        self.assertIn("rag", facets.ai_capabilities)
+        self.assertEqual(facets.seniority_level, "lead")
 
     def _make_job(
         self,

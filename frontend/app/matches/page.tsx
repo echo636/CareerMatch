@@ -685,7 +685,7 @@ export default async function MatchesPage({ searchParams }: MatchesPageProps) {
               const highlights = uniqueMeaningfulValues(match.job.basicInfo.highlights ?? []);
               const matchedSkills = getFilteredMatchedSkills(match);
               const missingSkills = getFilteredMissingSkills(match);
-              const tags = uniqueMeaningfulValues(match.job.tags.map((tag) => tag.name));
+              const tags = uniqueMeaningfulValues(match.job.tags.filter((tag) => !tag.filterable).map((tag) => tag.name));
               const preferDegrees = uniqueMeaningfulValues(match.job.educationConstraints.preferDegrees ?? []);
               const requiredMajors = uniqueMeaningfulValues(match.job.educationConstraints.requiredMajors ?? []);
               const preferredMajors = uniqueMeaningfulValues(match.job.educationConstraints.preferredMajors ?? []);

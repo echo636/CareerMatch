@@ -70,6 +70,20 @@ export type ResumeSkill = {
 export type ResumeTag = {
   name: string;
   category?: string | null;
+  slug?: string | null;
+  filterable?: boolean;
+  facetKey?: string | null;
+  facetValue?: string | null;
+};
+
+export type ResumeFilterFacets = {
+  roleCategories: string[];
+  targetCities: string[];
+  preferredWorkModes: string[];
+  aiCapabilities?: string[];
+  seniorityLevel?: string | null;
+  inferredSalaryMin?: number | null;
+  inferredSalaryMax?: number | null;
 };
 
 export type ResumeProfile = {
@@ -81,6 +95,7 @@ export type ResumeProfile = {
   skills: ResumeSkill[];
   tags: ResumeTag[];
   expectedSalary: SalaryRange;
+  filterFacets?: ResumeFilterFacets;
   isResume?: boolean | null;
   rawText?: string;
   sourceFileName?: string;
@@ -182,12 +197,20 @@ export type JobTag = {
   name: string;
   category?: string | null;
   weight?: number | null;
+  slug?: string | null;
+  filterable?: boolean;
+  facetKey?: string | null;
+  facetValue?: string | null;
 };
 
 export type JobFilterFacets = {
   roleCategories: string[];
   workModes: string[];
+  cityTokens?: string[];
+  aiCapabilities?: string[];
   isInternship?: boolean | null;
+  seniorityLevel?: string | null;
+  salaryBand?: string | null;
   postedAt?: string | null;
   postedDaysAgo?: number | null;
   minExperienceYears?: number | null;

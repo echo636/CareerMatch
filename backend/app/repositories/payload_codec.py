@@ -6,6 +6,7 @@ from app.domain.models import (
     BonusExperience,
     BonusSkill,
     CoreExperience,
+    build_job_standard_tags,
     JobFilterFacets,
     JobBasicInfo,
     JobEducationConstraints,
@@ -19,6 +20,7 @@ from app.domain.models import (
     RequiredSkill,
     ResumeBasicInfo,
     ResumeEducation,
+    ResumeFilterFacets,
     ResumeProfile,
     ResumeProject,
     ResumeSkill,
@@ -26,11 +28,13 @@ from app.domain.models import (
     ResumeWorkExperience,
     SalaryRange,
     build_job_filter_facets,
+    build_resume_filter_facets,
 )
 
 
 def resume_from_payload(payload: dict[str, Any]) -> ResumeProfile:
-    return ResumeProfile(
+    filter_facets_payload = payload.get("filter_facets") or {}
+    resume = ResumeProfile(
         id=str(payload.get("id") or ""),
         basic_info=ResumeBasicInfo(**(payload.get("basic_info") or {})),
         educations=[ResumeEducation(**item) for item in payload.get("educations") or []],
@@ -39,12 +43,17 @@ def resume_from_payload(payload: dict[str, Any]) -> ResumeProfile:
         skills=[ResumeSkill(**item) for item in payload.get("skills") or []],
         tags=[ResumeTag(**item) for item in payload.get("tags") or []],
         expected_salary=SalaryRange(**(payload.get("expected_salary") or {"min": 0, "max": 0, "currency": "CNY"})),
+        filter_facets=ResumeFilterFacets(**filter_facets_payload) if filter_facets_payload else ResumeFilterFacets(),
         is_resume=payload.get("is_resume"),
         raw_text=str(payload.get("raw_text") or ""),
         source_file_name=str(payload.get("source_file_name") or ""),
         source_content_type=str(payload.get("source_content_type") or ""),
         source_object_key=str(payload.get("source_object_key") or ""),
     )
+    resume.tags = [tag for tag in resume.tags if not getattr(tag, "filterable", False)] + build_resume_standard_tags(resume)
+    if not filter_facets_payload:
+        resume.filter_facets = build_resume_filter_facets(resume)
+    return resume
 
 
 def job_from_payload(payload: dict[str, Any]) -> JobProfile:
@@ -53,6 +62,18 @@ def job_from_payload(payload: dict[str, Any]) -> JobProfile:
     education_constraints = payload.get("education_constraints") or {}
     basic_info_payload = payload.get("basic_info") or {"title": "Untitled Role"}
     tags = [JobTag(**item) for item in payload.get("tags") or []]
+    tags = [tag for tag in tags if not getattr(tag, "filterable", False)] + build_job_standard_tags(
+        title=str(basic_info_payload.get("title") or "Untitled Role"),
+        location=basic_info_payload.get("location"),
+        job_type=basic_info_payload.get("job_type"),
+        summary=basic_info_payload.get("summary"),
+        tags=tags,
+        min_total_years=experience_requirements.get("min_total_years"),
+        max_total_years=experience_requirements.get("max_total_years"),
+        salary_min=basic_info_payload.get("salary_min"),
+        salary_max=basic_info_payload.get("salary_max"),
+        intern_salary_amount=basic_info_payload.get("intern_salary_amount"),
+    )
     filter_facets_payload = payload.get("filter_facets") or {}
     return JobProfile(
         id=str(payload.get("id") or ""),

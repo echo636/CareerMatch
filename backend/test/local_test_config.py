@@ -28,7 +28,7 @@ class ResumeSelectionConfig:
     """
 
     default_resume_id: str = ""
-    default_resume_file: str = r"D:\constructing_projects\CareerMatch\backend\uploads\resumes\resume-393061ce\e31efb4b_15-24K_10.pdf"
+    default_resume_file: str = r"D:\constructing_projects\CareerMatch\backend\uploads\resumes\resume-c141acca\1fb17f0a_15-24K_10.pdf"
     default_resume_ids: list[str] = field(default_factory=list)
 
 

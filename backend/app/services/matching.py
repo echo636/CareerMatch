@@ -480,9 +480,10 @@ class MatchingService:
         is far above the job's maximum budget (> 1.5脳)."""
         if not job.has_salary_reference:
             return False
-        if resume.expected_salary.min <= 0:
+        resume_min, _ = self._effective_expected_salary(resume)
+        if resume_min <= 0:
             return False
-        return resume.expected_salary.min > job.salary_range.max * self.algorithm_config.salary_far_above_budget_ratio
+        return resume_min > job.salary_range.max * self.algorithm_config.salary_far_above_budget_ratio
 
     def _classify_tier(
         self,
@@ -502,7 +503,7 @@ class MatchingService:
 
         # No salary data on either side 鈫?default to 绋?
         if ratio == 1.0 and (
-            resume.expected_salary.min <= 0 or not job.has_salary_reference
+            self._effective_expected_salary(resume)[0] <= 0 or not job.has_salary_reference
         ):
             return "match"
 
@@ -519,7 +520,8 @@ class MatchingService:
         more than the candidate expects; < 1 means it pays less.
         Returns 1.0 (neutral) when either side lacks salary data.
         """
-        resume_mid = (resume.expected_salary.min + resume.expected_salary.max) / 2
+        resume_min, resume_max = self._effective_expected_salary(resume)
+        resume_mid = (resume_min + resume_max) / 2
         if resume_mid <= 0:
             return 1.0
         if not job.has_salary_reference:
@@ -528,6 +530,17 @@ class MatchingService:
         if job_mid <= 0:
             return 1.0
         return job_mid / resume_mid
+
+    def _effective_expected_salary(self, resume: ResumeProfile) -> tuple[int, int]:
+        explicit_min = int(resume.expected_salary.min or 0)
+        explicit_max = int(resume.expected_salary.max or 0)
+        if explicit_min > 0 and explicit_max > 0:
+            return explicit_min, explicit_max
+        inferred_min = int(resume.filter_facets.inferred_salary_min or 0)
+        inferred_max = int(resume.filter_facets.inferred_salary_max or 0)
+        if inferred_min > 0 and inferred_max > 0:
+            return inferred_min, inferred_max
+        return explicit_min, explicit_max
 
     def _job_role_search_text(self, job: JobProfile) -> str:
         return " ".join(
@@ -1221,9 +1234,10 @@ class MatchingService:
         job: JobProfile,
         location_match: float,
     ) -> float:
-        if not job.has_salary_reference or resume.expected_salary.min <= 0:
+        resume_min, _ = self._effective_expected_salary(resume)
+        if not job.has_salary_reference or resume_min <= 0:
             return 1.0
-        ceiling_ratio = job.salary_range.max / max(resume.expected_salary.min, 1)
+        ceiling_ratio = job.salary_range.max / max(resume_min, 1)
         if ceiling_ratio >= 1.0:
             return 1.0
         if "remote" in job.filter_facets.work_modes:
@@ -1258,6 +1272,12 @@ class MatchingService:
         return 0.9
 
     def _resume_role_categories(self, resume: ResumeProfile) -> set[str]:
+        if resume.filter_facets.role_categories:
+            matched = {value.lower() for value in resume.filter_facets.role_categories if value}
+            if "fullstack_engineer" in matched:
+                matched.add("backend_engineer")
+                matched.add("frontend_engineer")
+            return matched
         searchable_parts = [
             resume.basic_info.current_title or "",
             resume.summary,
@@ -1435,6 +1455,8 @@ class MatchingService:
         return " ".join(part for part in parts if part).strip()
 
     def _resume_target_cities(self, resume: ResumeProfile) -> set[str]:
+        if resume.filter_facets.target_cities:
+            return self._split_city_tokens(list(resume.filter_facets.target_cities))
         cities: set[str] = set()
         if resume.basic_info.current_city:
             cities.update(self._split_city_tokens(resume.basic_info.current_city))
@@ -2032,11 +2054,10 @@ class MatchingService:
     def _salary_score(self, resume: ResumeProfile, job: JobProfile) -> float:
         if not job.has_salary_reference:
             return 1.0
-        if resume.expected_salary.min <= 0 or resume.expected_salary.max <= 0:
+        resume_min, resume_max = self._effective_expected_salary(resume)
+        if resume_min <= 0 or resume_max <= 0:
             return 1.0
 
-        resume_min = resume.expected_salary.min
-        resume_max = resume.expected_salary.max
         job_min = job.salary_range.min
         job_max = job.salary_range.max
 
