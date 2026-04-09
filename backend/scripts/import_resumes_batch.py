@@ -22,6 +22,8 @@ from app.core.config import get_settings
 from app.core.logging_utils import configure_logging
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx", ".doc", ".txt", ".md"}
+SKIP_FILE_NAMES = {"log.txt"}
+SKIP_PATH_TOKENS = {"output-x.x.x", "render"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,6 +47,12 @@ def parse_args() -> argparse.Namespace:
         default=12000,
         help="Trim extracted resume text to this many characters before sending to the LLM.",
     )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=800000,
+        help="Skip files larger than this size in bytes. Use 0 to disable.",
+    )
     return parser.parse_args()
 
 
@@ -58,8 +66,16 @@ def collect_candidate_files(input_dirs: list[Path]) -> list[Path]:
         if not input_dir.exists():
             continue
         for path in sorted(input_dir.rglob("*")):
-            if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES:
+            if not path.is_file():
+                continue
+            if path.name.lower() in SKIP_FILE_NAMES:
+                continue
+            lower_parts = {part.lower() for part in path.parts}
+            if lower_parts & SKIP_PATH_TOKENS:
+                continue
+            if path.suffix.lower() in SUPPORTED_SUFFIXES:
                 files.append(path)
+    files.sort(key=lambda item: (item.stat().st_size, item.name.lower()))
     return files
 
 
@@ -80,6 +96,7 @@ def main() -> int:
     skipped_existing = 0
     skipped_duplicate = 0
     skipped_empty = 0
+    skipped_large = 0
     failures: list[tuple[str, str]] = []
 
     for file_path in candidates:
@@ -90,6 +107,10 @@ def main() -> int:
             continue
 
         file_bytes = file_path.read_bytes()
+        if args.max_bytes and len(file_bytes) > args.max_bytes:
+            skipped_large += 1
+            print(f"[skipped-large] {file_path} bytes={len(file_bytes)}")
+            continue
         file_hash = hashlib.sha1(file_bytes).hexdigest()
         if file_hash in seen_hashes:
             skipped_duplicate += 1
@@ -131,6 +152,7 @@ def main() -> int:
             "skipped_existing_name": skipped_existing,
             "skipped_duplicate_content": skipped_duplicate,
             "skipped_empty_text": skipped_empty,
+            "skipped_large_file": skipped_large,
             "failed": len(failures),
         }
     )
