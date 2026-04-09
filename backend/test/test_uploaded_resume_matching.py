@@ -151,6 +151,13 @@ def build_breakdown_dict(breakdown: Any) -> dict[str, float]:
         "experience_match": float(breakdown.experience_match),
         "education_match": float(breakdown.education_match),
         "salary_match": float(breakdown.salary_match),
+        "domain_match": float(breakdown.domain_match),
+        "location_match": float(breakdown.location_match),
+        "role_level_fit": float(breakdown.role_level_fit),
+        "title_skill_alignment": float(breakdown.title_skill_alignment),
+        "transition_score": float(breakdown.transition_score),
+        "base_total": float(breakdown.base_total),
+        "penalty_multiplier": float(breakdown.penalty_multiplier),
         "total": float(breakdown.total),
     }
 

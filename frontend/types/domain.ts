@@ -211,6 +211,13 @@ export type MatchBreakdown = {
   experienceMatch: number;
   educationMatch: number;
   salaryMatch: number;
+  domainMatch: number;
+  locationMatch: number;
+  roleLevelFit: number;
+  titleSkillAlignment: number;
+  transitionScore: number;
+  baseTotal: number;
+  penaltyMultiplier: number;
   total: number;
 };
 

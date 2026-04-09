@@ -541,6 +541,222 @@ class MatchingFiltersTestCase(unittest.TestCase):
         self.assertLess(score, 0.9)
         self.assertGreaterEqual(score, 0.8)
 
+    def test_default_recommend_filters_overqualified_internship_and_campus_roles(self) -> None:
+        job_repository = JobRepository()
+        resume_repository = ResumeRepository()
+        vector_store = InMemoryVectorStore()
+        matching_service = MatchingService(
+            job_repository=job_repository,
+            resume_repository=resume_repository,
+            embedding_client=StaticEmbeddingClient(),
+            vector_store=vector_store,
+        )
+
+        resume = ResumeProfile(
+            id="resume-senior-default-filter",
+            basic_info=ResumeBasicInfo(name="Senior Candidate", current_title="Senior Backend Engineer", work_years=8),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Java"), ResumeSkill(name="Spring"), ResumeSkill(name="Netty")],
+            tags=[],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="8 years senior backend engineer",
+        )
+        resume_repository.save(resume)
+
+        now = datetime.now(timezone.utc)
+        internship_job = self._make_job(
+            job_id="job-overqualified-intern",
+            title="Backend Engineer Intern",
+            location="Shanghai",
+            job_type="intern",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=True,
+            posted_at=now,
+            min_years=0,
+            max_years=1,
+        )
+        campus_job = self._make_job(
+            job_id="job-overqualified-campus",
+            title="Campus Graduate Java Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=now,
+            min_years=0,
+            max_years=2,
+        )
+        regular_job = self._make_job(
+            job_id="job-regular-senior",
+            title="Senior Java Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=now,
+            min_years=5,
+            max_years=10,
+        )
+
+        job_repository.save_many([internship_job, campus_job, regular_job])
+        vector_store.upsert("jobs", internship_job.id, [0.98, 0.02], "intern")
+        vector_store.upsert("jobs", campus_job.id, [0.97, 0.03], "campus")
+        vector_store.upsert("jobs", regular_job.id, [1.0, 0.0], "regular")
+
+        matches = matching_service.recommend(resume.id, top_k=5)
+        matched_job_ids = [match.job.id for match in matches]
+
+        self.assertIn(regular_job.id, matched_job_ids)
+        self.assertNotIn(internship_job.id, matched_job_ids)
+        self.assertNotIn(campus_job.id, matched_job_ids)
+
+    def test_role_level_penalty_demotes_entry_level_roles_for_senior_candidate(self) -> None:
+        resume = ResumeProfile(
+            id="resume-role-level",
+            basic_info=ResumeBasicInfo(name="Senior Candidate", current_title="Senior Java Engineer", work_years=8),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[ResumeSkill(name="Java"), ResumeSkill(name="Spring")],
+            tags=[],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="8 years senior java engineer",
+        )
+        candidate_skill_index = self.matching_service._build_candidate_skill_index(resume)
+        candidate_terms = self.matching_service._build_candidate_terms(resume)
+
+        junior_job = self._make_job(
+            job_id="job-junior-java",
+            title="Junior Java Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=0,
+            max_years=2,
+        )
+        junior_job.skill_requirements = JobSkillRequirements(
+            required=[RequiredSkill(name="Java"), RequiredSkill(name="Spring")],
+            optional_groups=[],
+            bonus=[],
+        )
+
+        senior_job = self._make_job(
+            job_id="job-senior-java",
+            title="Senior Java Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=5,
+            max_years=10,
+        )
+        senior_job.skill_requirements = JobSkillRequirements(
+            required=[RequiredSkill(name="Java"), RequiredSkill(name="Spring")],
+            optional_groups=[],
+            bonus=[],
+        )
+
+        junior_breakdown = self.matching_service._build_breakdown(
+            resume,
+            junior_job,
+            0.64,
+            candidate_skill_index,
+            candidate_terms,
+            {},
+            {},
+        )
+        senior_breakdown = self.matching_service._build_breakdown(
+            resume,
+            senior_job,
+            0.64,
+            candidate_skill_index,
+            candidate_terms,
+            {},
+            {},
+        )
+
+        self.assertLess(junior_breakdown.role_level_fit, senior_breakdown.role_level_fit)
+        self.assertLess(junior_breakdown.total, senior_breakdown.total)
+        self.assertLess(junior_breakdown.penalty_multiplier, senior_breakdown.penalty_multiplier)
+
+    def test_stack_transition_keeps_adjacent_backend_roles_competitive(self) -> None:
+        matching_service = MatchingService(
+            job_repository=JobRepository(),
+            resume_repository=ResumeRepository(),
+            embedding_client=MappingEmbeddingClient(
+                {
+                    "java": [1.0, 0.0],
+                    "spring": [0.95, 0.05],
+                    "go": [0.0, 1.0],
+                    "tcp/ip": [0.5, 0.5],
+                }
+            ),
+            vector_store=InMemoryVectorStore(),
+        )
+        resume = ResumeProfile(
+            id="resume-stack-transition",
+            basic_info=ResumeBasicInfo(name="Backend Candidate", current_title="Senior Java Backend Engineer", work_years=8),
+            educations=[],
+            work_experiences=[],
+            projects=[],
+            skills=[
+                ResumeSkill(name="Java"),
+                ResumeSkill(name="Spring"),
+                ResumeSkill(name="Netty"),
+                ResumeSkill(name="TCP/IP"),
+            ],
+            tags=[],
+            expected_salary=SalaryRange(min=0, max=0),
+            raw_text="8 years java backend engineer with netty tcp ip distributed systems",
+        )
+        candidate_skill_index = matching_service._build_candidate_skill_index(resume)
+        candidate_terms = matching_service._build_candidate_terms(resume)
+
+        go_job = self._make_job(
+            job_id="job-go-backend",
+            title="Senior Go Backend Engineer",
+            location="Shanghai",
+            job_type="fulltime",
+            role_categories=["backend_engineer"],
+            work_modes=["onsite"],
+            is_internship=False,
+            posted_at=datetime.now(timezone.utc),
+            min_years=5,
+            max_years=10,
+        )
+        go_job.skill_requirements = JobSkillRequirements(
+            required=[RequiredSkill(name="Go"), RequiredSkill(name="TCP/IP")],
+            optional_groups=[],
+            bonus=[],
+        )
+        go_job.basic_info.summary = "High concurrency distributed backend with network protocols"
+
+        breakdown = matching_service._build_breakdown(
+            resume,
+            go_job,
+            0.64,
+            candidate_skill_index,
+            candidate_terms,
+            {},
+            {},
+        )
+
+        self.assertEqual(breakdown.title_skill_alignment, 0.0)
+        self.assertGreaterEqual(breakdown.transition_score, 0.55)
+        self.assertGreaterEqual(breakdown.role_level_fit, 0.9)
+        self.assertGreaterEqual(breakdown.penalty_multiplier, 0.45)
+        self.assertGreaterEqual(breakdown.total, 0.2)
+
     def _make_job(
         self,
         *,

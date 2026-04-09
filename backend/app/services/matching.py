@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 from math import sqrt
@@ -91,31 +91,31 @@ INFERRED_TOOL_CONFIDENCE = 0.84
 
 DEGREE_RANK = {
     "high_school": 1,
-    "高中": 1,
+    "楂樹腑": 1,
     "college": 2,
     "associate": 2,
-    "大专": 2,
-    "专科": 2,
+    "澶т笓": 2,
+    "涓撶": 2,
     "bachelor": 3,
-    "本科": 3,
-    "学士": 3,
+    "鏈": 3,
+    "瀛﹀＋": 3,
     "master": 4,
     "mba": 4,
-    "硕士": 4,
-    "研究生": 4,
+    "纭曞＋": 4,
+    "\u7814\u7a76\u751f": 4,
     "phd": 5,
     "doctor": 5,
-    "博士": 5,
+    "鍗氬＋": 5,
 }
 
 TITLE_PRIMARY_SKILL_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("java", ("java",)),
     ("python", ("python",)),
-    ("go", ("golang", "go", "go语言")),
+    ("go", ("golang", "go", "go璇█")),
     ("php", ("php",)),
     ("c++", ("c++", "cpp")),
     ("c#", ("c#", "csharp", ".net", "dotnet")),
-    ("javascript", ("javascript", "js", "前端")),
+    ("javascript", ("javascript", "js", "鍓嶇")),
     ("typescript", ("typescript", "ts")),
     ("react", ("react",)),
     ("vue", ("vue",)),
@@ -123,52 +123,84 @@ TITLE_PRIMARY_SKILL_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("android", ("android",)),
     ("ios", ("ios", "swift", "objective-c")),
     ("kotlin", ("kotlin",)),
-    ("llm", ("llm", "大模型", "ai", "人工智能")),
+    ("llm", ("llm", "\u5927\u6a21\u578b", "ai", "\u4eba\u5de5\u667a\u80fd")),
 )
 
 SPECIALIZED_ROLE_KEYWORDS = (
-    "高级",
-    "专家",
-    "核心自研",
-    "大模型",
-    "银行",
-    "保险",
-    "交易",
-    "稳定性",
-    "高并发",
-    "分布式",
-    "云原生",
-    "平台方向",
+    "楂樼骇",
+    "涓撳",
+    "鏍稿績鑷爺",
+    "\u5927\u6a21\u578b",
+    "閾惰",
+    "淇濋櫓",
+    "浜ゆ槗",
+    "\u7a33\u5b9a\u6027",
+    "\u9ad8\u5e76\u53d1",
+    "\u5206\u5e03\u5f0f",
+    "\u4e91\u539f\u751f",
+    "骞冲彴鏂瑰悜",
 )
 
 LEAD_ROLE_KEYWORDS = (
-    "主管",
-    "主程",
-    "经理",
-    "总监",
-    "负责人",
+    "涓荤",
+    "涓荤▼",
+    "缁忕悊",
+    "鎬荤洃",
+    "\u8d1f\u8d23\u4eba",
     "leader",
-    "架构师",
+    "\u67b6\u6784\u5e08",
+)
+
+ENTRY_ROLE_KEYWORDS = (
+    "junior",
+    "entry",
+    "entry-level",
+    "associate",
+    "trainee",
+    "intern",
+    "\u5b9e\u4e60",
+    "\u6821\u62db",
+    "\u5e94\u5c4a",
+    "\u6bd5\u4e1a\u751f",
+    "\u521d\u7ea7",
+)
+
+SENIOR_ROLE_KEYWORDS = (
+    "senior",
+    "staff",
+    "principal",
+    "expert",
+    "lead",
+    "architect",
+    "\u9ad8\u7ea7",
+    "\u8d44\u6df1",
+    "\u4e13\u5bb6",
+    "\u67b6\u6784\u5e08",
+)
+
+CAMPUS_ROLE_PATTERN = re.compile(
+    r"(20\d{2}\s*\u5c4a|\bcampus\b|\bgraduate\b|\u6821\u62db|\u5e94\u5c4a|\u6bd5\u4e1a\u751f)",
+    re.IGNORECASE,
 )
 
 GENERIC_ROLE_PATTERNS = (
-    "前端，后端，测试岗位均有",
-    "前端、后端，测试岗位均有",
-    "前端/后端/测试",
-    "前后端开发/测试",
-    "前端后端测试",
-    "多方向",
-    "均有",
+    "鍓嶇锛屽悗绔紝娴嬭瘯宀椾綅鍧囨湁",
+    "鍓嶇銆佸悗绔紝娴嬭瘯宀椾綅鍧囨湁",
+    "鍓嶇/鍚庣/娴嬭瘯",
+    "鍓嶅悗绔紑鍙?娴嬭瘯",
+    "鍓嶇鍚庣娴嬭瘯",
+    "\u591a\u65b9\u5411",
+    "鍧囨湁",
 )
 
 RESUME_ROLE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("frontend_engineer", ("前端", "frontend", "react", "vue", "javascript", "typescript", "web前端")),
-    ("backend_engineer", ("后端", "backend", "server", "php", "laravel", "python", "java", "spring", "golang", "go语言")),
-    ("fullstack_engineer", ("全栈", "full stack", "fullstack")),
-    ("algorithm_engineer", ("算法", "algorithm", "机器学习", "machine learning", "深度学习", "llm", "大模型", "nlp", "cv")),
-    ("data_engineer", ("数据", "data", "etl", "数仓", "大数据")),
-    ("mobile_engineer", ("android", "ios", "flutter", "uniapp", "react native", "小程序", "app")),
-    ("testing_engineer", ("测试", "qa", "test", "testing")),
+    ("frontend_engineer", ("鍓嶇", "frontend", "react", "vue", "javascript", "typescript", "web鍓嶇")),
+    ("backend_engineer", ("鍚庣", "backend", "server", "php", "laravel", "python", "java", "spring", "golang", "go璇█")),
+    ("fullstack_engineer", ("鍏ㄦ爤", "full stack", "fullstack")),
+    ("algorithm_engineer", ("\u7b97\u6cd5", "algorithm", "\u673a\u5668\u5b66\u4e60", "machine learning", "\u6df1\u5ea6\u5b66\u4e60", "llm", "\u5927\u6a21\u578b", "nlp", "cv")),
+    ("data_engineer", ("\u6570\u636e", "data", "etl", "\u6570\u4ed3", "\u5927\u6570\u636e")),
+    ("mobile_engineer", ("android", "ios", "flutter", "uniapp", "react native", "\u5c0f\u7a0b\u5e8f", "app")),
+    ("testing_engineer", ("娴嬭瘯", "qa", "test", "testing")),
 )
 
 STACK_TRANSITION_BRIDGES: dict[str, dict[str, float]] = {
@@ -184,21 +216,21 @@ STACK_TRANSITION_BRIDGES: dict[str, dict[str, float]] = {
 }
 
 CITY_REGION_GROUPS: tuple[set[str], ...] = (
-    {"上海", "杭州", "苏州", "南京", "无锡", "宁波", "嘉兴", "绍兴", "湖州", "常州", "昆山"},
-    {"北京", "天津", "石家庄", "廊坊"},
-    {"深圳", "广州", "东莞", "佛山", "珠海", "惠州"},
+    {"涓婃捣", "鏉窞", "鑻忓窞", "鍗椾含", "鏃犻敗", "瀹佹尝", "鍢夊叴", "缁嶅叴", "婀栧窞", "甯稿窞", "鏄嗗北"},
+    {"\u5317\u4eac", "\u5929\u6d25", "\u77f3\u5bb6\u5e84", "\u5eca\u574a"},
+    {"娣卞湷", "骞垮窞", "涓滆帪", "浣涘北", "鐝犳捣", "鎯犲窞"},
 )
 
 CLOSE_CITY_PAIRS: set[frozenset[str]] = {
-    frozenset({"上海", "杭州"}),
-    frozenset({"上海", "苏州"}),
-    frozenset({"上海", "昆山"}),
-    frozenset({"深圳", "广州"}),
-    frozenset({"深圳", "东莞"}),
-    frozenset({"广州", "佛山"}),
-    frozenset({"北京", "天津"}),
-    frozenset({"杭州", "宁波"}),
-    frozenset({"南京", "苏州"}),
+    frozenset({"涓婃捣", "鏉窞"}),
+    frozenset({"涓婃捣", "鑻忓窞"}),
+    frozenset({"涓婃捣", "鏄嗗北"}),
+    frozenset({"娣卞湷", "骞垮窞"}),
+    frozenset({"娣卞湷", "涓滆帪"}),
+    frozenset({"骞垮窞", "浣涘北"}),
+    frozenset({"鍖椾含", "澶╂触"}),
+    frozenset({"鏉窞", "瀹佹尝"}),
+    frozenset({"鍗椾含", "鑻忓窞"}),
 }
 
 logger = get_logger("services.matching")
@@ -316,6 +348,13 @@ class MatchingService:
                         "experience_match": breakdown.experience_match,
                         "education_match": breakdown.education_match,
                         "salary_match": breakdown.salary_match,
+                        "domain_match": breakdown.domain_match,
+                        "location_match": breakdown.location_match,
+                        "role_level_fit": breakdown.role_level_fit,
+                        "title_skill_alignment": breakdown.title_skill_alignment,
+                        "transition_score": breakdown.transition_score,
+                        "base_total": breakdown.base_total,
+                        "penalty_multiplier": breakdown.penalty_multiplier,
                         "total": breakdown.total,
                     },
                     "matched_skills": matched_skills,
@@ -368,6 +407,8 @@ class MatchingService:
             return False, "salary_far_above_budget"
         if self._direction_mismatch(resume, job):
             return False, "direction_mismatch"
+        if self._default_entry_level_mismatch(resume, job):
+            return False, "overqualified_entry_level"
         if self._clear_role_mismatch(resume, job):
             return False, "role_mismatch"
         return True, "passed"
@@ -426,9 +467,17 @@ class MatchingService:
             return False
         return True
 
+    def _default_entry_level_mismatch(self, resume: ResumeProfile, job: JobProfile) -> bool:
+        resume_years = float(resume.years_experience or 0)
+        if resume_years < 3.0:
+            return False
+        if job.filter_facets.is_internship is True:
+            return True
+        return self._is_campus_role(job)
+
     def _salary_far_above_budget(self, resume: ResumeProfile, job: JobProfile) -> bool:
         """Filter out jobs where the candidate's minimum salary expectation
-        is far above the job's maximum budget (> 1.5×)."""
+        is far above the job's maximum budget (> 1.5脳)."""
         if not job.has_salary_reference:
             return False
         if resume.expected_salary.min <= 0:
@@ -441,17 +490,17 @@ class MatchingService:
         job: JobProfile,
         breakdown: MatchBreakdown,
     ) -> str:
-        """Classify the match as reach/match/safety (冲/稳/保).
+        """Classify the match as reach/match/safety (鍐?绋?淇?.
 
         After ranking by non-salary match score, classify each job based on
         how the job's salary compares to the candidate's expectation:
-          - 冲 (reach):  job pays significantly above expectations
-          - 稳 (match):  job salary roughly aligns with expectations
-          - 保 (safety): job pays at or below expectations
+          - 鍐?(reach):  job pays significantly above expectations
+          - 绋?(match):  job salary roughly aligns with expectations
+          - 淇?(safety): job pays at or below expectations
         """
         ratio = self._salary_aspiration_ratio(resume, job)
 
-        # No salary data on either side → default to 稳
+        # No salary data on either side 鈫?default to 绋?
         if ratio == 1.0 and (
             resume.expected_salary.min <= 0 or not job.has_salary_reference
         ):
@@ -479,6 +528,150 @@ class MatchingService:
         if job_mid <= 0:
             return 1.0
         return job_mid / resume_mid
+
+    def _job_role_search_text(self, job: JobProfile) -> str:
+        return " ".join(
+            part.lower()
+            for part in [job.title, job.basic_info.job_type or "", job.summary]
+            if part
+        )
+
+    def _is_campus_role(self, job: JobProfile) -> bool:
+        return bool(CAMPUS_ROLE_PATTERN.search(self._job_role_search_text(job)))
+
+    def _is_entry_level_role(self, job: JobProfile) -> bool:
+        searchable_text = self._job_role_search_text(job)
+        if job.filter_facets.is_internship is True or self._is_campus_role(job):
+            return True
+        if any(keyword in searchable_text for keyword in ENTRY_ROLE_KEYWORDS):
+            return True
+        max_years = job.filter_facets.max_experience_years
+        min_years = job.filter_facets.min_experience_years
+        if max_years is not None and max_years <= 2:
+            return True
+        if min_years is not None and min_years <= 1 and max_years is not None and max_years <= 3:
+            return True
+        return False
+
+    def _is_senior_role(self, job: JobProfile) -> bool:
+        searchable_text = self._job_role_search_text(job)
+        if any(keyword in searchable_text for keyword in SENIOR_ROLE_KEYWORDS):
+            return True
+        min_years = job.filter_facets.min_experience_years
+        return min_years is not None and min_years >= 5
+
+    def _job_experience_band(self, job: JobProfile) -> tuple[float | None, float | None, str]:
+        if job.filter_facets.is_internship is True:
+            return 0.0, 1.0, "internship"
+        if self._is_campus_role(job):
+            return 0.0, 2.0, "campus"
+
+        min_years = job.filter_facets.min_experience_years
+        max_years = job.filter_facets.max_experience_years
+        role_tag = "standard"
+
+        if min_years is None and max_years is None:
+            if self._is_entry_level_role(job):
+                return 0.0, 3.0, "entry"
+            if self._is_senior_role(job):
+                return 5.0, 12.0, "senior"
+            return None, None, "unknown"
+
+        if min_years is None and max_years is not None:
+            min_years = max(0.0, float(max_years) - 2.0)
+        if max_years is None and min_years is not None:
+            max_years = float(min_years) + (6.0 if self._is_senior_role(job) else 4.0)
+
+        min_years = float(min_years) if min_years is not None else None
+        max_years = float(max_years) if max_years is not None else None
+
+        if self._is_entry_level_role(job):
+            role_tag = "entry"
+        elif self._is_senior_role(job):
+            role_tag = "senior"
+        return min_years, max_years, role_tag
+
+    def _role_level_fit(self, resume: ResumeProfile, job: JobProfile) -> float:
+        resume_years = float(resume.years_experience or 0)
+        min_years, max_years, role_tag = self._job_experience_band(job)
+
+        if resume_years <= 0:
+            return 0.55 if role_tag in {"internship", "campus", "entry"} else 0.70
+        if min_years is None and max_years is None:
+            return 0.75
+
+        if role_tag == "internship":
+            if resume_years <= 1.0:
+                return 1.0
+            if resume_years <= 2.0:
+                return 0.72
+            if resume_years <= 3.0:
+                return 0.45
+            return 0.08
+
+        if role_tag == "campus":
+            if resume_years <= 2.0:
+                return 1.0
+            if resume_years <= 3.0:
+                return 0.65
+            if resume_years <= 5.0:
+                return 0.35
+            return 0.12
+
+        effective_min = min_years if min_years is not None else 0.0
+        effective_max = max_years if max_years is not None else effective_min + 4.0
+
+        if effective_min <= resume_years <= effective_max:
+            return 1.0
+        if resume_years < effective_min:
+            return max(0.18, min(resume_years / max(effective_min, 1.0), 1.0) * 0.92)
+
+        over_years = resume_years - effective_max
+        if role_tag == "entry":
+            if over_years >= 5.0:
+                return 0.18
+            if over_years >= 3.0:
+                return 0.32
+            if over_years >= 1.5:
+                return 0.55
+            return 0.75
+        if role_tag == "senior":
+            if over_years <= 2.0:
+                return 0.92
+            if over_years <= 4.0:
+                return 0.82
+            return 0.72
+        if over_years <= 2.0:
+            return 0.88
+        if over_years <= 4.0:
+            return 0.74
+        if over_years <= 6.0:
+            return 0.62
+        return 0.50
+
+    def _role_level_penalty(self, job: JobProfile, role_level_fit: float) -> float:
+        _, _, role_tag = self._job_experience_band(job)
+        if role_level_fit >= 0.85:
+            return 1.0
+        if role_tag in {"internship", "campus"}:
+            if role_level_fit >= 0.55:
+                return 0.72
+            if role_level_fit >= 0.35:
+                return 0.48
+            return 0.22
+        if role_tag == "entry":
+            if role_level_fit >= 0.70:
+                return 0.90
+            if role_level_fit >= 0.55:
+                return 0.72
+            if role_level_fit >= 0.35:
+                return 0.58
+            return 0.44
+        if role_level_fit >= 0.65:
+            return 0.88
+        if role_level_fit >= 0.45:
+            return 0.74
+        return 0.60
 
     def _direction_mismatch(self, resume: ResumeProfile, job: JobProfile) -> bool:
         """Filter out jobs that have zero tag overlap with the resume when both sides
@@ -656,7 +849,8 @@ class MatchingService:
         salary_match = self._salary_score(resume, job)
         domain_match = self._domain_relevance_score(resume, job, candidate_terms, domain_vector_cache)
         location_match = self._location_match_score(resume, job)
-        total = round(
+        role_level_fit = self._role_level_fit(resume, job)
+        base_total = round(
             self._weighted_score(
                 [
                     (vector_similarity, self.algorithm_config.total_weight_vector),
@@ -678,24 +872,52 @@ class MatchingService:
             ),
             4,
         )
+        hard_skill_penalty = self._hard_skill_penalty(
+            job,
+            required_scores,
+            candidate_skill_index,
+            skill_vector_cache,
+            transition_score,
+        )
+        specialized_penalty = self._specialized_role_penalty(
+            job,
+            domain_match,
+            title_skill_alignment,
+            transition_score,
+        )
+        role_level_penalty = self._role_level_penalty(job, role_level_fit)
+        underpay_penalty = self._underpay_location_penalty(resume, job, location_match)
+        lead_role_penalty = self._lead_role_penalty(
+            job,
+            title_skill_alignment,
+            transition_score,
+            location_match,
+            salary_match,
+        )
+        total = base_total
         total = round(
             total
-            * self._hard_skill_penalty(job, required_scores, candidate_skill_index, skill_vector_cache),
+            * hard_skill_penalty,
             4,
         )
         total = round(
             total
-            * self._specialized_role_penalty(job, domain_match, title_skill_alignment),
+            * specialized_penalty,
             4,
         )
         total = round(
             total
-            * self._underpay_location_penalty(resume, job, location_match),
+            * role_level_penalty,
             4,
         )
         total = round(
             total
-            * self._lead_role_penalty(job, title_skill_alignment, transition_score, location_match, salary_match),
+            * underpay_penalty,
+            4,
+        )
+        total = round(
+            total
+            * lead_role_penalty,
             4,
         )
         total = round(
@@ -709,12 +931,20 @@ class MatchingService:
             ),
             4,
         )
+        penalty_multiplier = round((total / base_total), 4) if base_total > 0 else 1.0
         return MatchBreakdown(
             vector_similarity=round(vector_similarity, 4),
             skill_match=round(skill_match, 4),
             experience_match=round(experience_match, 4),
             education_match=round(education_match, 4),
             salary_match=round(salary_match, 4),
+            domain_match=round(domain_match, 4),
+            location_match=round(location_match, 4),
+            role_level_fit=round(role_level_fit, 4),
+            title_skill_alignment=round(title_skill_alignment, 4),
+            transition_score=round(transition_score, 4),
+            base_total=round(base_total, 4),
+            penalty_multiplier=penalty_multiplier,
             total=total,
         )
 
@@ -829,12 +1059,12 @@ class MatchingService:
         delimiter_pattern = r"[\\/|、，,；;]+"
         extracted = infer_skills({}, cleaned)
         parts = [
-            token.strip("()（）[]{}+·• ")
+            token.strip("()（）[]{}+·-")
             for token in re.split(
                 delimiter_pattern,
                 cleaned.replace("（", "/").replace("）", "/").replace("(", "/").replace(")", "/"),
             )
-            if token.strip("()（）[]{}+·• ")
+            if token.strip("()（）[]{}+·-")
         ]
         candidates = [*parts, *extracted]
         if not candidates:
@@ -922,9 +1152,10 @@ class MatchingService:
         required_scores: list[float],
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         skill_vector_cache: dict[str, list[float] | None],
+        transition_score: float,
     ) -> float:
         config = self.algorithm_config
-        penalty = self._title_skill_penalty(job, candidate_skill_index, skill_vector_cache)
+        penalty = self._title_skill_penalty(job, candidate_skill_index, skill_vector_cache, transition_score)
         if job.skill_requirements.required and required_scores:
             primary_scores = required_scores[: min(2, len(required_scores))]
             primary_coverage = self._average(primary_scores)
@@ -940,10 +1171,12 @@ class MatchingService:
         job: JobProfile,
         candidate_skill_index: dict[str, dict[str, float | str | None]],
         skill_vector_cache: dict[str, list[float] | None],
+        transition_score: float,
     ) -> float:
         alignment = self._title_primary_skill_alignment(job, candidate_skill_index, skill_vector_cache)
+        effective_alignment = max(alignment, min(transition_score * 0.85, 0.75))
         penalty_floor = self.algorithm_config.title_skill_mismatch_penalty
-        return round(penalty_floor + ((1.0 - penalty_floor) * alignment), 4)
+        return round(penalty_floor + ((1.0 - penalty_floor) * effective_alignment), 4)
 
     def _title_primary_skill_alignment(
         self,
@@ -966,15 +1199,19 @@ class MatchingService:
         job: JobProfile,
         domain_match: float,
         title_skill_alignment: float,
+        transition_score: float,
     ) -> float:
         searchable_text = f"{job.title} {job.summary}".lower()
         if not any(keyword.lower() in searchable_text for keyword in SPECIALIZED_ROLE_KEYWORDS):
             return 1.0
-        if title_skill_alignment >= 0.5 and domain_match >= 0.65:
+        effective_alignment = max(title_skill_alignment, min(transition_score * 0.85, 0.75))
+        if effective_alignment >= 0.65 and domain_match >= 0.55:
             return 1.0
-        if title_skill_alignment >= 0.5 and domain_match >= 0.5:
-            return 0.9
-        if title_skill_alignment > 0 and domain_match >= 0.5:
+        if effective_alignment >= 0.50 and domain_match >= 0.45:
+            return 0.92
+        if transition_score >= 0.45 and domain_match >= 0.35:
+            return 0.88
+        if effective_alignment > 0 and domain_match >= 0.50:
             return 0.85
         return self.algorithm_config.specialized_role_penalty
 
@@ -1202,7 +1439,7 @@ class MatchingService:
         if resume.basic_info.current_city:
             cities.update(self._split_city_tokens(resume.basic_info.current_city))
         if resume.raw_text:
-            for label in ("期望城市", "意向城市"):
+            for label in ("\u671f\u671b\u57ce\u5e02", "\u610f\u5411\u57ce\u5e02"):
                 match = re.search(rf"{label}[:：]\s*([^\n]+)", resume.raw_text)
                 if match:
                     cities.update(self._split_city_tokens(match.group(1)))
@@ -1224,12 +1461,12 @@ class MatchingService:
             text = item.strip()
             if not text:
                 continue
-            candidates = re.split(r"[,，/|、;；\s\[\]'\"()\-·]+", text)
+            candidates = re.split(r"[,，/|、\s\[\]'\"()\-·]+", text)
             for candidate in candidates:
                 normalized = candidate.strip()
                 if not normalized:
                     continue
-                if normalized.endswith("市") and len(normalized) > 1:
+                if normalized.endswith("\u5e02") and len(normalized) > 1:
                     normalized = normalized[:-1]
                 tokens.add(normalized)
         return tokens
@@ -1290,8 +1527,8 @@ class MatchingService:
         searchable_text = f"{job.title} {job.summary}".lower()
         if any(pattern in searchable_text for pattern in GENERIC_ROLE_PATTERNS):
             return 0.03
-        if "软件开发工程师" in searchable_text and any(
-            token in searchable_text for token in ("前端", "后端", "测试")
+        if "杞欢寮€鍙戝伐绋嬪笀" in searchable_text and any(
+            token in searchable_text for token in ("鍓嶇", "鍚庣", "娴嬭瘯")
         ):
             return 0.02
         return 0.0
@@ -1865,3 +2102,4 @@ class MatchingService:
 
     def _degree_rank(self, degree: str | None) -> int:
         return DEGREE_RANK.get((degree or "").strip().lower(), 0)
+

@@ -144,6 +144,13 @@ def build_breakdown_dict(breakdown: Any) -> dict[str, float]:
         "experience_match": float(breakdown.experience_match),
         "education_match": float(breakdown.education_match),
         "salary_match": float(breakdown.salary_match),
+        "domain_match": float(breakdown.domain_match),
+        "location_match": float(breakdown.location_match),
+        "role_level_fit": float(breakdown.role_level_fit),
+        "title_skill_alignment": float(breakdown.title_skill_alignment),
+        "transition_score": float(breakdown.transition_score),
+        "base_total": float(breakdown.base_total),
+        "penalty_multiplier": float(breakdown.penalty_multiplier),
         "total": float(breakdown.total),
     }
 
@@ -159,6 +166,13 @@ def format_breakdown_summary(breakdown: dict[str, float], include_total: bool = 
             f"exp={breakdown['experience_match']:.4f}",
             f"edu={breakdown['education_match']:.4f}",
             f"salary={breakdown['salary_match']:.4f}",
+            f"domain={breakdown['domain_match']:.4f}",
+            f"loc={breakdown['location_match']:.4f}",
+            f"level={breakdown['role_level_fit']:.4f}",
+            f"title={breakdown['title_skill_alignment']:.4f}",
+            f"trans={breakdown['transition_score']:.4f}",
+            f"base={breakdown['base_total']:.4f}",
+            f"pen={breakdown['penalty_multiplier']:.4f}",
         ]
     )
     return ", ".join(parts)
@@ -871,7 +885,16 @@ def render_report(report: dict[str, Any]) -> str:
             f"{index}. {item['job_title']} | company={item['company']} | total={breakdown['total']:.4f} | vec={breakdown['vector_similarity']:.4f}"
         )
         lines.append(
-            f"   skill={breakdown['skill_match']:.4f}, exp={breakdown['experience_match']:.4f}, edu={breakdown['education_match']:.4f}, salary={breakdown['salary_match']:.4f}"
+            "   "
+            f"skill={breakdown['skill_match']:.4f}, exp={breakdown['experience_match']:.4f}, "
+            f"edu={breakdown['education_match']:.4f}, salary={breakdown['salary_match']:.4f}, "
+            f"domain={breakdown['domain_match']:.4f}, loc={breakdown['location_match']:.4f}"
+        )
+        lines.append(
+            "   "
+            f"level={breakdown['role_level_fit']:.4f}, title={breakdown['title_skill_alignment']:.4f}, "
+            f"trans={breakdown['transition_score']:.4f}, base={breakdown['base_total']:.4f}, "
+            f"pen={breakdown['penalty_multiplier']:.4f}"
         )
         lines.append(f"   matched_skills: {format_values(item['matched_skills'], limit=8)}")
         lines.append(f"   missing_skills: {format_values(item['missing_skills'], limit=8)}")

@@ -136,7 +136,7 @@ class RerankConfig:
     - LOCAL_TEST_CONFIG.rerank.active_profile = "dashscope_qwen36_plus"
     """
 
-    active_profile: str = "dashscope_qwen_plus_latest"
+    active_profile: str = "dashscope_qwen36_plus" # dashscope_qwen_plus_latest dashscope_qwen36_plus
     profiles: dict[str, RerankModelProfile] = field(default_factory=_default_rerank_profiles)
 
     def profile_names(self) -> list[str]:

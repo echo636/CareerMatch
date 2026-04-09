@@ -677,6 +677,13 @@ class MatchBreakdown:
     experience_match: float
     education_match: float
     salary_match: float
+    domain_match: float
+    location_match: float
+    role_level_fit: float
+    title_skill_alignment: float
+    transition_score: float
+    base_total: float
+    penalty_multiplier: float
     total: float
 
 
