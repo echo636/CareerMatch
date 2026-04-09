@@ -26,7 +26,14 @@ except ImportError:  # pragma: no cover - optional in bare environments
     def load_dotenv(*_args, **_kwargs):
         return False
 
-from local_test_config import DEFAULT_RESUME_FILE, DEFAULT_RESUME_ID, LOCAL_TEST_CONFIG
+from local_test_config import (
+    configured_rerank_api_key_env_names,
+    DEFAULT_RESUME_FILE,
+    DEFAULT_RESUME_ID,
+    get_active_rerank_profile,
+    list_rerank_profile_names,
+    resolve_rerank_api_key,
+)
 from report_manager import resolve_report_paths, write_report_files
 
 BOOTSTRAP_IMPORT_ERROR: Exception | None = None
@@ -522,16 +529,21 @@ def extract_json_object(content: str) -> str:
 
 
 def resolve_rerank_settings(settings: Any) -> dict[str, Any]:
-    rerank = LOCAL_TEST_CONFIG.rerank
+    profile_name, rerank = get_active_rerank_profile()
     source = (rerank.source or "backend_client").strip().lower()
     if source not in {"backend_client", "openai_compatible"}:
+        available = ", ".join(list_rerank_profile_names())
         raise SystemExit(
-            "local_test_config.py: LOCAL_TEST_CONFIG.rerank.source must be "
-            "'backend_client' or 'openai_compatible'."
+            "local_test_config.py: selected rerank profile "
+            f"{profile_name!r} has invalid source={source!r}. "
+            f"Expected 'backend_client' or 'openai_compatible'. Available profiles: {available}."
         )
 
     if source == "backend_client":
         return {
+            "profile_name": profile_name,
+            "profile_display_name": rerank.display_name or profile_name,
+            "profile_notes": rerank.notes,
             "source": source,
             "provider": (rerank.provider or settings.llm_provider or "backend").strip(),
             "model": (rerank.model or getattr(settings, "qwen_llm_model", "") or "backend-llm").strip(),
@@ -539,19 +551,25 @@ def resolve_rerank_settings(settings: Any) -> dict[str, Any]:
 
     provider = (rerank.provider or "openai_compatible").strip()
     model = (rerank.model or "").strip()
-    api_key = (rerank.api_key or os.getenv("RERANK_API_KEY", "")).strip()
+    api_key, api_key_source = resolve_rerank_api_key(rerank, environ=os.environ)
     chat_url = (rerank.chat_url or os.getenv("RERANK_CHAT_URL", "")).strip()
     if not model or not api_key or not chat_url:
+        env_names = ", ".join(configured_rerank_api_key_env_names(rerank)) or "<none>"
         raise SystemExit(
-            "local_test_config.py: when LOCAL_TEST_CONFIG.rerank.source='openai_compatible', "
-            "rerank.model, rerank.api_key, and rerank.chat_url are required."
+            "local_test_config.py: when the selected rerank profile uses source='openai_compatible', "
+            "model, chat_url, and api_key are required. "
+            f"Current profile={profile_name!r}, api_key_env_vars={env_names}."
         )
 
     return {
+        "profile_name": profile_name,
+        "profile_display_name": rerank.display_name or profile_name,
+        "profile_notes": rerank.notes,
         "source": source,
         "provider": provider,
         "model": model,
         "api_key": api_key,
+        "api_key_source": api_key_source or "missing",
         "chat_url": chat_url,
         "timeout_sec": max(int(rerank.timeout_sec), 1),
         "retry_count": max(int(rerank.retry_count), 0),
@@ -714,6 +732,8 @@ def llm_rank_candidates(services: Any, resume: Any, compared_candidates: list[di
             }
 
     return {
+        "profile_name": rerank_settings["profile_name"],
+        "profile_display_name": rerank_settings["profile_display_name"],
         "source": rerank_settings["source"],
         "provider": rerank_settings["provider"],
         "model": rerank_settings["model"],
@@ -801,6 +821,7 @@ def render_report(report: dict[str, Any]) -> str:
     lines.append(f"- Postgres DSN: {report['settings']['postgres_dsn']}")
     lines.append(f"- Upload Root: {report['settings']['upload_root']}")
     lines.append(f"- LLM Source: {report['settings']['llm_source']}")
+    lines.append(f"- LLM Profile: {report['settings']['llm_profile']}")
     lines.append(f"- LLM Provider: {report['settings']['llm_provider']}")
     lines.append(f"- LLM Model: {report['settings']['llm_model']}")
     lines.append(f"- Jobs In Store: {report['settings']['job_count']}")
@@ -935,6 +956,7 @@ def main() -> int:
             "postgres_dsn": mask_dsn(settings.postgres_dsn),
             "upload_root": str(upload_roots[0]) if upload_roots else str(settings.object_storage_root),
             "llm_source": llm_result["source"],
+            "llm_profile": llm_result["profile_name"],
             "llm_provider": llm_result["provider"],
             "llm_model": llm_result["model"],
             "job_count": len(services.matching_service.job_repository.list()),
